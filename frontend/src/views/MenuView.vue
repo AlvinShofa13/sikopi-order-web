@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
+import { formatRupiah, createToast } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -12,7 +13,7 @@ const searchQuery = ref('')
 const selectedCategory = ref('Semua')
 const activeItemForNote = ref(null)
 const itemNoteInput = ref('')
-const toastMessage = ref('')
+const { toastMessage, showToast } = createToast(2600)
 
 onMounted(async () => {
   await store.fetchMenuFromAPI()
@@ -42,14 +43,6 @@ const filteredItems = computed(() => {
     return matchesSearch && matchesCategory
   })
 })
-
-function formatRupiah(value) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(value)
-}
 
 function openNoteModal(item) {
   if (item.is_available === false) return
@@ -81,13 +74,6 @@ function quickAddToCart(item) {
   }
   store.addToCart(item)
   showToast(`${item.name} berhasil ditambahkan`)
-}
-
-function showToast(msg) {
-  toastMessage.value = msg
-  setTimeout(() => {
-    toastMessage.value = ''
-  }, 2600)
 }
 
 function goToCart() {

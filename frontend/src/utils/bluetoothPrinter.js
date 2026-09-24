@@ -80,23 +80,29 @@ export function formatTwoColumns(leftText, rightText, lineWidth = 32) {
  * - Tanpa nama pemesan, kontak, atau jenis layanan
  * - Tanpa status bayar lunas di total akhir
  */
-export function generateKitchenReceiptText(order, width = 32) {
+export function generateKitchenReceiptText(order, width = 32, brandName = '') {
   if (!order) return ''
 
   const dividerSingle = '-'.repeat(width)
   const dividerDouble = '='.repeat(width)
   const lines = []
 
-  // 1. Header (Hanya SIKopi dan Tanda Struk Dapur)
-  lines.push('SIKopi'.padStart((width + 6) / 2))
+  const activeBrand = brandName || order.brandName || (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_brand_name') : '') || 'SIKopi'
+
+  // 1. Header (Nama Brand Dinamis dan Tanda Struk Dapur)
+  lines.push(activeBrand.padStart((width + activeBrand.length) / 2))
   lines.push('[ STRUK DAPUR ]'.padStart((width + 15) / 2))
   lines.push(dividerDouble)
 
-  // 2. Metadata Pesanan (No. Pesanan, Pelanggan, dan Waktu)
-  lines.push(formatTwoColumns('No. Pesanan:', order.id || '-', width))
+  // 2. Metadata Pesanan (No. Pesanan, Pelanggan, Token, dan Waktu)
+  lines.push(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
   lines.push(formatTwoColumns('Pelanggan:', order.customer?.name || 'Pelanggan', width))
+  if (order.customer?.token) {
+    lines.push(formatTwoColumns('Token Antrean:', '#' + order.customer.token, width))
+  }
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('id-ID') : new Date().toLocaleString('id-ID')
   lines.push(formatTwoColumns('Waktu:', orderDate, width))
+  lines.push(formatTwoColumns('Status Bayar:', 'SUDAH LUNAS', width))
 
   lines.push(dividerSingle)
   lines.push('DAFTAR PESANAN DAPUR:')
@@ -128,33 +134,35 @@ export function generateKitchenReceiptText(order, width = 32) {
 
 /**
  * Menghasilkan representasi plain text struk pelanggan
- * Desain Minimalis SIKopi:
- * - Hanya SIKopi dan tanda [ STRUK PELANGGAN ]
- * - Termasuk Nama Pemesan
- * - Tanpa kontak atau jenis layanan
- * - Tanpa status bayar lunas di total akhir
+ * Memuat Nama Pemesan, Token Pelanggan, rincian hidangan, dan Status Bayar Lunas
  */
-export function generateCustomerReceiptText(order, width = 32) {
+export function generateCustomerReceiptText(order, width = 32, brandName = '') {
   if (!order) return ''
 
   const dividerSingle = '-'.repeat(width)
   const dividerDouble = '='.repeat(width)
   const lines = []
 
-  // 1. Header (Hanya SIKopi dan Tanda Struk Pelanggan)
-  lines.push('SIKopi'.padStart((width + 6) / 2))
+  const activeBrand = brandName || order.brandName || (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_brand_name') : '') || 'SIKopi'
+
+  // 1. Header (Nama Brand Dinamis dan Tanda Struk Pelanggan)
+  lines.push(activeBrand.padStart((width + activeBrand.length) / 2))
   lines.push('[ STRUK PELANGGAN ]'.padStart((width + 19) / 2))
   lines.push(dividerSingle)
 
-  // 2. Metadata Pesanan (No. Pesanan, Nama, Waktu, Pembayaran)
-  lines.push(formatTwoColumns('No. Pesanan:', order.id || '-', width))
-  lines.push(formatTwoColumns('Nama:', order.customer?.name || 'Pelanggan', width))
+  // 2. Metadata Pesanan (No. Pesanan, Nama, Token, Waktu, Pembayaran)
+  lines.push(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
+  lines.push(formatTwoColumns('Nama Pemesan:', order.customer?.name || 'Pelanggan', width))
+  if (order.customer?.token) {
+    lines.push(formatTwoColumns('Token Pelanggan:', '#' + order.customer.token, width))
+  }
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('id-ID') : new Date().toLocaleString('id-ID')
   lines.push(formatTwoColumns('Waktu:', orderDate, width))
 
   if (order.payment?.label) {
     lines.push(formatTwoColumns('Pembayaran:', order.payment.label, width))
   }
+  lines.push(formatTwoColumns('Status Bayar:', 'SUDAH TERBAYAR LUNAS', width))
 
   lines.push(dividerSingle)
   lines.push('RINCIAN PESANAN:')
@@ -187,11 +195,12 @@ export function generateCustomerReceiptText(order, width = 32) {
 
   lines.push(dividerDouble)
   lines.push(formatTwoColumns('TOTAL AKHIR:', formatRupiahSimple(breakdown.total || 0), width))
+  lines.push(formatTwoColumns('STATUS:', 'LUNAS (SUDAH DIBAYAR)', width))
   lines.push(dividerSingle)
 
   // Footer
   lines.push('Terima kasih atas pesanan Anda!'.padStart((width + 31) / 2))
-  lines.push('Instagram: @sikopi.jkt'.padStart((width + 22) / 2))
+  lines.push(`Nikmati sajian ${activeBrand}!`.padStart((width + 16 + activeBrand.length) / 2))
 
   return lines.join('\n')
 }
@@ -202,15 +211,15 @@ export function generateCustomerReceiptText(order, width = 32) {
  * @param {number} width Lebar kolom (32 atau 48)
  * @param {'both'|'kitchen'|'customer'} mode Mode struk
  */
-export function generateReceiptPlainText(order, width = 32, mode = 'both') {
+export function generateReceiptPlainText(order, width = 32, mode = 'both', brandName = '') {
   if (!order) return ''
 
   if (mode === 'kitchen') {
-    return generateKitchenReceiptText(order, width)
+    return generateKitchenReceiptText(order, width, brandName)
   }
 
   if (mode === 'customer') {
-    return generateCustomerReceiptText(order, width)
+    return generateCustomerReceiptText(order, width, brandName)
   }
 
   // Mode 'both': tampilkan kedua struk dengan pemisah jelas
@@ -222,18 +231,18 @@ export function generateReceiptPlainText(order, width = 32, mode = 'both') {
     blockDivider,
     headerDapur.padStart((width + headerDapur.length) / 2).substring(0, width),
     blockDivider,
-    generateKitchenReceiptText(order, width),
+    generateKitchenReceiptText(order, width, brandName),
     '\n' + blockDivider,
     headerPelanggan.padStart((width + headerPelanggan.length) / 2).substring(0, width),
     blockDivider,
-    generateCustomerReceiptText(order, width)
+    generateCustomerReceiptText(order, width, brandName)
   ].join('\n')
 }
 
 /**
  * Membangun buffer byte ESC/POS untuk Struk Dapur
  */
-export function buildKitchenEscPosBuffer(order, width = 32) {
+export function buildKitchenEscPosBuffer(order, width = 32, brandName = '') {
   const encoder = new TextEncoder()
   const byteArrays = []
 
@@ -250,14 +259,16 @@ export function buildKitchenEscPosBuffer(order, width = 32) {
     byteArrays.push(encoder.encode(normalized + '\n'))
   }
 
+  const activeBrand = brandName || order.brandName || (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_brand_name') : '') || 'SIKopi'
+
   // 1. Inisialisasi
   pushBytes(ESC_POS.INIT)
 
-  // 2. Header (Hanya SIKopi dan Tanda Struk Dapur)
+  // 2. Header (Nama Brand Dinamis dan Tanda Struk Dapur)
   pushBytes(ESC_POS.ALIGN_CENTER)
   pushBytes(ESC_POS.FONT_DOUBLE_SIZE)
   pushBytes(ESC_POS.BOLD_ON)
-  pushText('SIKopi')
+  pushText(activeBrand)
 
   pushBytes(ESC_POS.FONT_NORMAL)
   pushBytes(ESC_POS.BOLD_OFF)
@@ -268,15 +279,19 @@ export function buildKitchenEscPosBuffer(order, width = 32) {
   const dividerDouble = '='.repeat(width)
   pushText(dividerDouble)
 
-  // 4. Metadata Pesanan (No. Pesanan, Pelanggan, dan Waktu)
+  // 4. Metadata Pesanan (No. Pesanan, Pelanggan, Token, dan Waktu)
   pushBytes(ESC_POS.ALIGN_LEFT)
   pushBytes(ESC_POS.BOLD_ON)
-  pushText(formatTwoColumns('No. Pesanan:', order.id || '-', width))
+  pushText(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
   pushText(formatTwoColumns('Pelanggan:', order.customer?.name || 'Pelanggan', width))
+  if (order.customer?.token) {
+    pushText(formatTwoColumns('Token Antrean:', '#' + order.customer.token, width))
+  }
   pushBytes(ESC_POS.BOLD_OFF)
 
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('id-ID') : new Date().toLocaleString('id-ID')
   pushText(formatTwoColumns('Waktu:', orderDate, width))
+  pushText(formatTwoColumns('Status Bayar:', 'SUDAH LUNAS', width))
 
   pushText(dividerSingle)
 
@@ -329,7 +344,7 @@ export function buildKitchenEscPosBuffer(order, width = 32) {
 /**
  * Membangun buffer byte ESC/POS untuk Struk Pelanggan
  */
-export function buildCustomerEscPosBuffer(order, width = 32) {
+export function buildCustomerEscPosBuffer(order, width = 32, brandName = '') {
   const encoder = new TextEncoder()
   const byteArrays = []
 
@@ -346,14 +361,16 @@ export function buildCustomerEscPosBuffer(order, width = 32) {
     byteArrays.push(encoder.encode(normalized + '\n'))
   }
 
+  const activeBrand = brandName || order.brandName || (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_brand_name') : '') || 'SIKopi'
+
   // 1. Inisialisasi
   pushBytes(ESC_POS.INIT)
 
-  // 2. Header (Hanya SIKopi dan Tanda Struk Pelanggan)
+  // 2. Header (Nama Brand Dinamis dan Tanda Struk Pelanggan)
   pushBytes(ESC_POS.ALIGN_CENTER)
   pushBytes(ESC_POS.FONT_DOUBLE_SIZE)
   pushBytes(ESC_POS.BOLD_ON)
-  pushText('SIKopi')
+  pushText(activeBrand)
 
   pushBytes(ESC_POS.FONT_NORMAL)
   pushBytes(ESC_POS.BOLD_OFF)
@@ -364,11 +381,14 @@ export function buildCustomerEscPosBuffer(order, width = 32) {
   const dividerDouble = '='.repeat(width)
   pushText(dividerSingle)
 
-  // 4. Metadata Pesanan (No. Pesanan, Nama, Waktu, Pembayaran)
+  // 4. Metadata Pesanan (No. Pesanan, Nama, Token, Waktu, Pembayaran)
   pushBytes(ESC_POS.ALIGN_LEFT)
   pushBytes(ESC_POS.BOLD_ON)
-  pushText(formatTwoColumns('No. Pesanan:', order.id || '-', width))
-  pushText(formatTwoColumns('Nama:', order.customer?.name || 'Pelanggan', width))
+  pushText(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
+  pushText(formatTwoColumns('Nama Pemesan:', order.customer?.name || 'Pelanggan', width))
+  if (order.customer?.token) {
+    pushText(formatTwoColumns('Token Pelanggan:', '#' + order.customer.token, width))
+  }
   pushBytes(ESC_POS.BOLD_OFF)
 
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('id-ID') : new Date().toLocaleString('id-ID')
@@ -377,6 +397,7 @@ export function buildCustomerEscPosBuffer(order, width = 32) {
   if (order.payment?.label) {
     pushText(formatTwoColumns('Pembayaran:', order.payment.label, width))
   }
+  pushText(formatTwoColumns('Status Bayar:', 'SUDAH TERBAYAR LUNAS', width))
 
   pushText(dividerSingle)
 
@@ -416,9 +437,10 @@ export function buildCustomerEscPosBuffer(order, width = 32) {
 
   pushText(dividerDouble)
 
-  // Total Akhir (Tebal) - Tanpa Status Bayar Lunas
+  // Total Akhir (Tebal) & Status Bayar Lunas
   pushBytes(ESC_POS.BOLD_ON)
   pushText(formatTwoColumns('TOTAL PEMBAYARAN', formatRupiahSimple(breakdown.total || 0), width))
+  pushText(formatTwoColumns('STATUS PEMBAYARAN', 'LUNAS', width))
   pushBytes(ESC_POS.BOLD_OFF)
 
   pushText(dividerSingle)
@@ -426,7 +448,7 @@ export function buildCustomerEscPosBuffer(order, width = 32) {
   // 7. Footer
   pushBytes(ESC_POS.ALIGN_CENTER)
   pushText('Terima kasih atas pesanan Anda!')
-  pushText('Instagram: @sikopi.jkt')
+  pushText(`Nikmati sajian segar dari ${activeBrand}!`)
 
   // 8. Feed Kertas (5 baris) & Potong
   pushBytes(ESC_POS.FEED_LINES(5))
@@ -456,19 +478,20 @@ function mergeByteArrays(byteArrays) {
  * @param {Object} order Objek pesanan
  * @param {number} width Lebar kertas thermal (32 atau 48 kolom)
  * @param {'both'|'kitchen'|'customer'} mode Pilihan struk yang dicetak (default 'both': dua struk)
+ * @param {string} brandName Nama brand dinamis
  */
-export function buildEscPosBuffer(order, width = 32, mode = 'both') {
+export function buildEscPosBuffer(order, width = 32, mode = 'both', brandName = '') {
   if (mode === 'kitchen') {
-    return buildKitchenEscPosBuffer(order, width)
+    return buildKitchenEscPosBuffer(order, width, brandName)
   }
 
   if (mode === 'customer') {
-    return buildCustomerEscPosBuffer(order, width)
+    return buildCustomerEscPosBuffer(order, width, brandName)
   }
 
   // Default 'both': Cetak Struk Dapur lalu Struk Pelanggan (terpisah potong kertas)
-  const kitchenBuffer = buildKitchenEscPosBuffer(order, width)
-  const customerBuffer = buildCustomerEscPosBuffer(order, width)
+  const kitchenBuffer = buildKitchenEscPosBuffer(order, width, brandName)
+  const customerBuffer = buildCustomerEscPosBuffer(order, width, brandName)
 
   return mergeByteArrays([kitchenBuffer, customerBuffer])
 }
@@ -608,6 +631,7 @@ export async function printReceiptViaBluetooth(order, options = {}) {
   const { 
     width = 32, 
     mode = 'both', 
+    brandName = (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_brand_name') : '') || 'SIKopi',
     tearDelaySeconds = 7, 
     onWaitTear = null,
     onProgress = () => {} 
@@ -716,7 +740,7 @@ export async function printReceiptViaBluetooth(order, options = {}) {
         totalSteps: 2, 
         message: 'Mencetak Struk 1 (Dapur)...' 
       })
-      const kitchenData = buildKitchenEscPosBuffer(order, width)
+      const kitchenData = buildKitchenEscPosBuffer(order, width, brandName)
       await sendDataInChunks(writeCharacteristic, kitchenData, 64)
 
       // Beri jeda singkat agar buffer motor printer tuntas mengeluarkan kertas
@@ -757,7 +781,7 @@ export async function printReceiptViaBluetooth(order, options = {}) {
         totalSteps: 2, 
         message: 'Mencetak Struk 2 (Pelanggan)...' 
       })
-      const customerData = buildCustomerEscPosBuffer(order, width)
+      const customerData = buildCustomerEscPosBuffer(order, width, brandName)
       await sendDataInChunks(writeCharacteristic, customerData, 64)
 
     } else {
@@ -766,7 +790,7 @@ export async function printReceiptViaBluetooth(order, options = {}) {
         : 'Struk Pelanggan'
 
       onProgress({ status: 'printing', message: `Mengirim ${printModeLabel} ke printer...` })
-      const singleData = buildEscPosBuffer(order, width, mode)
+      const singleData = buildEscPosBuffer(order, width, mode, brandName)
       await sendDataInChunks(writeCharacteristic, singleData, 64)
     }
 

@@ -13,6 +13,6 @@ services:
       - ./backend:/app
     env_file:
       - ./backend/.env
-    # NOTE: jangan tambah blok `environment:` untuk ADMIN_PASSWORD/SECRET_KEY di sini —
+    # NOTE: jangan tambah blok `environment:` untuk secret di sini —
     # `environment:` menimpa `env_file`, dan substitusi kosong akan mengosongkan secret di container.
     restart: unless-stopped

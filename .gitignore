@@ -15,6 +15,12 @@ frontend/.env.local
 *.sqlite3
 *.db-journal
 backend/*.db
+# Local DB backups & SQLite journals (never push: contain customer PII)
+*.bak*
+*.db-shm
+*.db-wal
+*.sqlite3-shm
+*.sqlite3-wal
 
 # Python & FastAPI
 __pycache__/

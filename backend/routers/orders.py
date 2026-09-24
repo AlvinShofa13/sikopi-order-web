@@ -28,23 +28,10 @@ class OrderConnectionManager:
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
 
-    async def broadcast_order(self, order_data: dict):
+    async def broadcast(self, event: str, order_data: dict):
         for connection in list(self.active_connections):
             try:
-                await connection.send_json({
-                    "event": "NEW_ORDER",
-                    "order": order_data
-                })
-            except Exception:
-                self.disconnect(connection)
-
-    async def broadcast_status(self, order_data: dict):
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_json({
-                    "event": "STATUS_UPDATED",
-                    "order": order_data
-                })
+                await connection.send_json({"event": event, "order": order_data})
             except Exception:
                 self.disconnect(connection)
 
@@ -91,8 +78,7 @@ def serialize_order(ord: Order) -> Dict[str, Any]:
             "label": ord.payment_label,
             "reference": ord.payment_reference,
             "status": ord.payment_status,
-            "qrisPayload": ord.qris_payload,
-            "qrisImageUrl": ord.qris_image_url,
+            "paid": bool(ord.is_paid),
         },
         "items": [
             {
@@ -321,8 +307,6 @@ async def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
         payment_label=payload.payment.label or ("QRIS" if is_qris else "Bayar di Kasir (Tunai / EDC)"),
         payment_reference=payload.payment.reference or f"REF-{random.randint(100000, 999000)}",
         payment_status="Menunggu Pembayaran",
-        qris_payload=payload.payment.qrisPayload if is_qris else None,
-        qris_image_url=payload.payment.qrisImageUrl if is_qris else None,
         subtotal=subtotal,
         eco_fee=eco_fee,
         tax=tax,
@@ -367,7 +351,7 @@ async def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_order)
     serialized = serialize_order(new_order)
-    await order_manager.broadcast_order(serialized)
+    await order_manager.broadcast("NEW_ORDER", serialized)
     return serialized
 
 
@@ -380,13 +364,18 @@ async def update_order_status(order_id: str, payload: OrderStatusUpdate, db: Ses
 
     if payload.order_status:
         ord.order_status = payload.order_status
-    if payload.payment_status:
+    if payload.is_paid is not None:
+        ord.is_paid = payload.is_paid
+        ord.payment_status = "Lunas" if payload.is_paid else "Menunggu Pembayaran"
+    elif payload.payment_status:
         ord.payment_status = payload.payment_status
+        if "lunas" in payload.payment_status.lower():
+            ord.is_paid = True
 
     db.commit()
     db.refresh(ord)
     serialized = serialize_order(ord)
-    await order_manager.broadcast_status(serialized)
+    await order_manager.broadcast("STATUS_UPDATED", serialized)
     return serialized
 
 

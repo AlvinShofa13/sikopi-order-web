@@ -41,9 +41,8 @@ class Order(Base):
     payment_method = Column(String(50), nullable=False, default="qris")  # 'qris' or 'cash'
     payment_label = Column(String(100), default="QRIS")
     payment_reference = Column(String(100), nullable=True)
-    payment_status = Column(String(50), default="Menunggu Pembayaran")   # 'Menunggu Pembayaran', 'Lunas'
-    qris_payload = Column(Text, nullable=True)
-    qris_image_url = Column(Text, nullable=True)
+    payment_status = Column(String(50), default="Menunggu Pembayaran")
+    is_paid = Column(Boolean, default=False, nullable=False)
 
     # Financial Breakdown
     subtotal = Column(Float, default=0.0)

@@ -5,11 +5,8 @@
 
 import qrcode from './qrcodeGenerator.js'
 
-export const STATIC_QRIS_AZRIEL_SABIQ = 
+export const STATIC_QRIS_AZRIEL_SABIQ =
   '00020101021126610014COM.GO-JEK.WWW01189360091437660130700210G7660130700303UMI51440014ID.CO.QRIS.WWW0215ID10265289663140303UMI5204573253033605802ID5924AZRIEL SABIQ GAMING GEAR6008KARAWANG61054137162070703A016304D859'
-
-// Deprecated alias for backwards compatibility
-export const STATIC_QRIS_BERKAH_ABADI = STATIC_QRIS_AZRIEL_SABIQ
 
 /**
  * Menghitung Checksum CRC16 CCITT (Polynomial 0x1021, Initial 0xFFFF)
@@ -79,22 +76,6 @@ export function generateQrisDataUrl(amount, staticQris = STATIC_QRIS_AZRIEL_SABI
   qr.addData(payload)
   qr.make()
   return qr.createDataURL(cellSize, margin)
-}
-
-/**
- * Menghasilkan SVG markup scalable untuk QR Code 100% offline
- * @param {number} amount - Nominal transaksi
- * @param {string} staticQris - Base static QRIS
- * @param {number} cellSize - Module size
- * @param {number} margin - Quiet zone margin
- * @returns {string} SVG tag string
- */
-export function generateQrisSvg(amount, staticQris = STATIC_QRIS_AZRIEL_SABIQ, cellSize = 7, margin = 3) {
-  const payload = generateDynamicQrisPayload(staticQris, amount)
-  const qr = qrcode(0, 'M')
-  qr.addData(payload)
-  qr.make()
-  return qr.createSvgTag({ cellSize, margin, scalable: true })
 }
 
 /**

@@ -2,18 +2,11 @@
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
+import { formatRupiah } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
 const store = useOrderStore()
-
-function formatRupiah(value) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(value)
-}
 
 function handleQuantityChange(id, change) {
   store.updateQuantity(id, change)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { topMenus, paymentBreakdown, salesSummary, ordersToCsv } from '@/utils/salesAnalytics'
+import { topMenus, paymentBreakdown, ordersToCsv, isOrderPaid, paymentLabel } from '@/utils/salesAnalytics'
 
 const orders = [
   {
@@ -34,10 +34,6 @@ describe('salesAnalytics', () => {
     expect(pay.find((p) => p.method === 'qris')).toMatchObject({ count: 1, pct: 50 })
   })
 
-  it('summarizes totals', () => {
-    expect(salesSummary(orders)).toMatchObject({ total_orders: 2, total_revenue: 6, total_portions: 6 })
-  })
-
   it('builds Excel-ready CSV with BOM', () => {
     const csv = ordersToCsv(orders)
     expect(csv.charCodeAt(0)).toBe(0xfeff)
@@ -48,6 +44,15 @@ describe('salesAnalytics', () => {
   it('handles empty orders', () => {
     expect(topMenus([])).toEqual([])
     expect(paymentBreakdown([])).toEqual([])
-    expect(salesSummary([])).toMatchObject({ total_orders: 0, total_revenue: 0 })
+  })
+
+  it('reads paid boolean with legacy string fallback', () => {
+    expect(isOrderPaid({ payment: { paid: true } })).toBe(true)
+    expect(isOrderPaid({ payment: { paid: false } })).toBe(false)
+    expect(isOrderPaid({ payment: { status: 'Sudah Lunas' } })).toBe(true)
+    expect(isOrderPaid({ payment: { status: 'Menunggu Pembayaran' } })).toBe(false)
+    expect(isOrderPaid(null)).toBe(false)
+    expect(paymentLabel({ payment: { paid: true } })).toBe('Lunas')
+    expect(paymentLabel({ payment: { paid: false } })).toBe('Menunggu Pembayaran')
   })
 })

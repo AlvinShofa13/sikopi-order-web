@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from database import engine, SessionLocal, Base
+from database import engine, SessionLocal, Base, ensure_schema
 from seed import seed_database
 from routers import auth, menu, tokens, orders, settings
 
@@ -17,6 +17,9 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 async def lifespan(app: FastAPI):
     # 1. Initialize Database Tables
     Base.metadata.create_all(bind=engine)
+
+    # 1b. Migrate existing DBs (tambah kolom baru + backfill, idempoten)
+    ensure_schema()
     
     # 2. Seed Initial Menus and Token
     db = SessionLocal()
@@ -57,19 +60,8 @@ app.include_router(tokens.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
 
-# Static files for uploaded images (accessible at /uploads/ and /api/uploads/)
+# Static files for uploaded images
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
-app.mount("/api/uploads", StaticFiles(directory=UPLOADS_DIR), name="api_uploads")
-
-
-@app.get("/")
-def root():
-    return {
-        "status": "online",
-        "service": "sikopi FastAPI Backend",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
 
 
 @app.get("/api/health")

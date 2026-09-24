@@ -33,6 +33,9 @@ async function request(endpoint, options = {}) {
 
   try {
     const res = await fetch(url, config)
+    if (res.status === 204) {
+      return { ok: true, data: null }
+    }
     if (!res.ok) {
       let errorMsg = `HTTP Error ${res.status}`
       try {
@@ -163,6 +166,11 @@ export const api = {
       return request(`/orders/${orderId}/status`, {
         method: 'PATCH',
         body: JSON.stringify(statusData)
+      })
+    },
+    async remove(orderId) {
+      return request(`/orders/${orderId}`, {
+        method: 'DELETE'
       })
     }
   },

@@ -1,11 +1,11 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAdminStore } from '@/stores/adminStore'
 import AppIcon from '@/components/icons/AppIcon.vue'
-import Chart from 'chart.js/auto'
 import { api } from '@/services/api'
+import { formatRupiah, isCustomImage, createToast } from '@/utils/format'
 import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl } from '@/utils/salesAnalytics'
 import { isBluetoothSupported, printReceiptViaBluetooth, getSavedPrinterName, forgetBluetoothPrinter } from '@/utils/bluetoothPrinter'
 import { generateDynamicQrisPayload, generateQrisDataUrl, getQrisImageUrl } from '@/utils/qris'
@@ -25,8 +25,7 @@ const searchQuery = ref('')
 const selectedOrder = ref(null)
 const isPrinting = ref(false)
 const printMessage = ref('')
-const toastMessage = ref('')
-const toastType = ref('success')
+const { toastMessage, toastType, showToast } = createToast()
 const copied = ref(false)
 const activeTab = ref('orders') // 'orders' | 'menus' | 'tokens' | 'analisis' | 'branding'
 
@@ -50,10 +49,6 @@ const menuForm = ref({
   category: 'Kopi Pilihan',
   description: '',
   price: 1,
-  calories: 45,
-  protein: '1g',
-  dietInfo: 'Sehat & Alami',
-  prepTime: '3-5 mnt',
   image: '',
   is_available: true
 })
@@ -157,7 +152,6 @@ function connectWebSocket() {
 }
 
 async function syncRealtimeOrders() {
-  const currentCount = store.orderHistory.length
   await store.refreshOrdersFromDB()
   const newCount = store.orderHistory.length
   if (prevOrderCount > 0 && newCount > prevOrderCount) {
@@ -197,7 +191,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopRealtimeSync()
-  destroyCharts()
 })
 
 // Data Computeds
@@ -207,13 +200,10 @@ const menuItems = computed(() => store.menuItems)
 const usedTokensMap = computed(() => store.usedTokensMap || {})
 
 // ---- Sales analytics (server stats preferred, local fallback) ----
+// Visual murni CSS (rank bars + legend); tanpa chart lib.
 const salesStats = ref(null)
 const statsLoading = ref(false)
 const isExporting = ref(false)
-const menuChartCanvas = ref(null)
-const payChartCanvas = ref(null)
-let menuChart = null
-let payChart = null
 
 const analyticsTopMenus = computed(() => {
   if (salesStats.value?.top_menus?.length) return salesStats.value.top_menus
@@ -236,57 +226,12 @@ async function fetchSalesStats() {
     // fallback lokal via computed
   } finally {
     statsLoading.value = false
-    await nextTick()
-    renderCharts()
   }
 }
 
 function openAnalyticsTab() {
   activeTab.value = 'analisis'
   fetchSalesStats()
-}
-
-function destroyCharts() {
-  if (menuChart) { menuChart.destroy(); menuChart = null }
-  if (payChart) { payChart.destroy(); payChart = null }
-}
-
-function renderCharts() {
-  if (activeTab.value !== 'analisis') return
-  destroyCharts()
-  const palette = ['#3D5A4C', '#E07A5F', '#8FA98F', '#E8C39E', '#1C1917', '#C9654C', '#B7C9BC', '#F0DCC8', '#5F7A5E', '#A8BFA9']
-  try {
-    if (menuChartCanvas.value && analyticsTopMenus.value.length) {
-      menuChart = new Chart(menuChartCanvas.value, {
-        type: 'bar',
-        data: {
-          labels: analyticsTopMenus.value.map(m => m.name),
-          datasets: [{ data: analyticsTopMenus.value.map(m => m.qty), backgroundColor: palette, borderRadius: 6 }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
-      })
-    }
-    if (payChartCanvas.value && analyticsPayments.value.length) {
-      payChart = new Chart(payChartCanvas.value, {
-        type: 'doughnut',
-        data: {
-          labels: analyticsPayments.value.map(p => `${p.label} (${p.count})`),
-          datasets: [{ data: analyticsPayments.value.map(p => p.count), backgroundColor: palette, borderWidth: 2, borderColor: '#fff' }]
-        },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-      })
-    }
-  } catch {
-    // canvas/chart failure must not break dashboard
-  }
-}
-
-watch(orderHistory, () => { if (activeTab.value === 'analisis') renderCharts() })
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob)
-  downloadFromUrl(url, filename)
-  setTimeout(() => URL.revokeObjectURL(url), 5000)
 }
 
 async function handleExport(format) {
@@ -296,12 +241,12 @@ async function handleExport(format) {
   try {
     const res = await fetch(api.orders.exportUrl(format))
     if (!res.ok) throw new Error(`Server ${res.status}`)
-    downloadBlob(await res.blob(), filename)
+    downloadFromUrl(URL.createObjectURL(await res.blob()), filename)
     showToast(`File ${filename} berhasil diunduh.`)
   } catch {
     if (format === 'csv') {
       // Fallback lokal: rakit CSV dari data yang sudah ada
-      downloadBlob(new Blob([ordersToCsv(filteredOrders.value)], { type: 'text/csv;charset=utf-8' }), filename)
+      downloadFromUrl(URL.createObjectURL(new Blob([ordersToCsv(filteredOrders.value)], { type: 'text/csv;charset=utf-8' })), filename)
       showToast('Server tidak terjangkau, CSV dirakit dari data lokal.')
     } else {
       showToast('Gagal mengunduh Excel dari server. Pastikan backend berjalan.', 'error')
@@ -481,11 +426,33 @@ async function handleDeleteMenu(item) {
   }
 }
 
-// Payment Status Update
-function markOrderAsPaid(order) {
+// Payment Status Update (persist ke backend; realtime via WS STATUS_UPDATED)
+async function markOrderAsPaid(order) {
+  if (!order || order.payment?.paid) return
+  try {
+    const res = await api.orders.updateStatus(order.orderId, { is_paid: true })
+    if (!res.ok) throw new Error(res.error || 'Gagal menyimpan status.')
+    order.payment.paid = true
+    order.payment.status = 'Lunas'
+    showToast(`Pesanan #${order.orderId} lunas. Struk bisa dicetak.`)
+  } catch (err) {
+    showToast(err.message || 'Gagal menandai lunas.', 'error')
+  }
+}
+
+// Pembatalan pesanan (Admin saja, permanen)
+async function handleCancelOrder(order) {
   if (!order) return
-  order.payment.status = 'Sudah Lunas'
-  showToast(`Pesanan #${order.orderId} ditandai Sudah Lunas.`)
+  if (!confirm(`Batalkan pesanan #${order.orderId} (${order.customer?.name || 'Pelanggan'})? Data dihapus permanen.`)) return
+  try {
+    const res = await api.orders.remove(order.orderId)
+    if (!res.ok) throw new Error(res.error || 'Gagal membatalkan.')
+    store.orderHistory = store.orderHistory.filter(o => o.orderId !== order.orderId)
+    if (selectedOrder.value?.orderId === order.orderId) selectedOrder.value = null
+    showToast(`Pesanan #${order.orderId} dibatalkan & dihapus.`)
+  } catch (err) {
+    showToast(err.message || 'Gagal membatalkan pesanan.', 'error')
+  }
 }
 
 // Bluetooth Thermal Printing
@@ -522,6 +489,7 @@ async function handlePrintReceipt(order, mode = 'both') {
     const result = await printReceiptViaBluetooth(order, {
       width: paperWidth.value,
       mode: mode,
+      brandName: store.brandName || 'SIKopi',
       tearDelaySeconds: tearDelaySeconds.value,
       onProgress: (p) => {
         printMessage.value = p.message
@@ -572,15 +540,6 @@ function printViaBrowser() {
   window.print()
 }
 
-function formatRupiah(value) {
-  if (!value) return 'Rp 0'
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(value)
-}
-
 function formatDate(isoString) {
   if (!isoString) return '-'
   const d = new Date(isoString)
@@ -590,14 +549,6 @@ function formatDate(isoString) {
     hour: '2-digit',
     minute: '2-digit'
   }) + ' WIB'
-}
-
-function showToast(msg, type = 'success') {
-  toastMessage.value = msg
-  toastType.value = type
-  setTimeout(() => {
-    toastMessage.value = ''
-  }, 3500)
 }
 
 function getOrderQrisUrl(ord) {
@@ -628,11 +579,6 @@ const presetIcons = [
   { id: 'heart', label: 'Cinta & Peduli', desc: 'Nuansa ramah, penuh perhatian terhadap kesehatan.' },
   { id: 'shield-check', label: 'Kualitas Teruji', desc: 'Menjamin standar higienis dan kebersihan tertinggi.' }
 ]
-
-function isCustomImage(val) {
-  if (!val) return false
-  return val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:') || val.startsWith('/')
-}
 
 watch([() => store.brandIcon, () => store.brandName], ([newIcon, newName]) => {
   brandingForm.value.icon = newIcon || 'leaf'
@@ -808,7 +754,7 @@ async function handleResetBranding() {
         <div class="admin-nav-inner container">
           <div class="nav-brand-group">
             <div class="brand-icon-box">
-              <img v-if="isCustomImage(store.brandIcon)" :src="store.brandIcon" alt="Logo" class="brand-icon-img" />
+              <img v-if="isCustomImage(store.brandIcon)" :src="api.fileUrl(store.brandIcon)" alt="Logo" class="brand-icon-img" />
               <AppIcon v-else :name="store.brandIcon || 'leaf'" :size="20" stroke-width="2" />
             </div>
             <span class="nav-brand-title">{{ store.brandName || 'SIKopi' }} Kasir</span>
@@ -1052,9 +998,9 @@ async function handleResetBranding() {
                   <td class="col-status">
                     <span 
                       class="badge-pay-status"
-                      :class="{ 'paid': ord.payment?.status === 'Sudah Lunas' }"
+                      :class="{ 'paid': ord.payment?.paid }"
                     >
-                      {{ ord.payment?.status || 'Menunggu Pembayaran' }}
+                      {{ ord.payment?.paid ? 'Lunas' : 'Menunggu Pembayaran' }}
                     </span>
                   </td>
                   <td class="col-actions">
@@ -1073,11 +1019,21 @@ async function handleResetBranding() {
                         type="button" 
                         class="btn-act btn-print" 
                         @click="handlePrintReceipt(ord, 'both')"
-                        :disabled="isPrinting"
-                        title="Cetak 2 Struk Thermal (Dapur & Pelanggan)"
+                        :disabled="isPrinting || !ord.payment?.paid"
+                        :title="ord.payment?.paid ? 'Cetak 2 Struk Thermal (Dapur & Pelanggan)' : 'Aktif setelah pembayaran lunas'"
                       >
                         <AppIcon name="printer" :size="14" />
                         <span>Cetak Struk</span>
+                      </button>
+
+                      <button 
+                        type="button" 
+                        class="btn-act btn-cancel-order" 
+                        @click="handleCancelOrder(ord)"
+                        title="Batalkan & hapus pesanan (Admin)"
+                      >
+                        <AppIcon name="trash" :size="14" />
+                        <span>Batal</span>
                       </button>
                     </div>
                   </td>
@@ -1219,9 +1175,6 @@ async function handleResetBranding() {
                 <AppIcon name="bag" :size="16" />
                 <span>Menu Paling Laris</span>
               </h3>
-              <div class="chart-wrap">
-                <canvas ref="menuChartCanvas"></canvas>
-              </div>
               <ol class="rank-list">
                 <li v-for="(m, idx) in analyticsTopMenus.slice(0, 5)" :key="m.name" class="rank-row">
                   <span class="rank-num font-mono">{{ idx + 1 }}</span>
@@ -1245,9 +1198,6 @@ async function handleResetBranding() {
                 <AppIcon name="cash" :size="16" />
                 <span>Metode Pembayaran Favorit</span>
               </h3>
-              <div class="chart-wrap chart-wrap-doughnut">
-                <canvas ref="payChartCanvas"></canvas>
-              </div>
               <ul class="pay-list">
                 <li v-for="p in analyticsPayments" :key="p.method" class="pay-row">
                   <strong>{{ p.label }}</strong>
@@ -1602,11 +1552,11 @@ async function handleResetBranding() {
                 <button 
                   type="button" 
                   class="btn-mark-paid"
-                  :disabled="selectedOrder.payment?.status === 'Sudah Lunas'"
+                  :disabled="selectedOrder.payment?.paid"
                   @click="markOrderAsPaid(selectedOrder)"
                 >
                   <AppIcon name="check" :size="18" />
-                  <span>{{ selectedOrder.payment?.status === 'Sudah Lunas' ? 'Pembayaran Telah Lunas' : 'Konfirmasi Sudah Dibayar' }}</span>
+                  <span>{{ selectedOrder.payment?.paid ? 'Pembayaran Telah Lunas' : 'Konfirmasi Sudah Dibayar' }}</span>
                 </button>
               </div>
             </div>
@@ -1679,13 +1629,16 @@ async function handleResetBranding() {
                 </button>
               </div>
 
-              <!-- Print Buttons -->
+              <!-- Print Buttons (aktif hanya setelah lunas) -->
               <div class="print-buttons-row">
+                <p v-if="!selectedOrder.payment?.paid" class="print-locked-hint">
+                  Tombol cetak aktif setelah pembayaran dikonfirmasi lunas.
+                </p>
                 <button 
                   type="button" 
                   class="btn-print-action btn-print-both" 
                   @click="handlePrintReceipt(selectedOrder, 'both')"
-                  :disabled="isPrinting"
+                  :disabled="isPrinting || !selectedOrder.payment?.paid"
                 >
                   <AppIcon name="printer" :size="16" />
                   <span>Cetak 2 Struk (Dapur + Pelanggan)</span>
@@ -1695,7 +1648,7 @@ async function handleResetBranding() {
                   type="button" 
                   class="btn-print-action btn-print-customer" 
                   @click="handlePrintReceipt(selectedOrder, 'customer')"
-                  :disabled="isPrinting"
+                  :disabled="isPrinting || !selectedOrder.payment?.paid"
                 >
                   <span>Struk Pelanggan Saja</span>
                 </button>
@@ -1704,7 +1657,7 @@ async function handleResetBranding() {
                   type="button" 
                   class="btn-print-action btn-print-kitchen" 
                   @click="handlePrintReceipt(selectedOrder, 'kitchen')"
-                  :disabled="isPrinting"
+                  :disabled="isPrinting || !selectedOrder.payment?.paid"
                 >
                   <span>Struk Dapur Saja</span>
                 </button>
@@ -1713,6 +1666,7 @@ async function handleResetBranding() {
                   type="button" 
                   class="btn-print-action btn-print-browser" 
                   @click="printViaBrowser"
+                  :disabled="!selectedOrder.payment?.paid"
                 >
                   <AppIcon name="receipt" :size="16" />
                   <span>Cetak Browser / PDF</span>
@@ -2513,16 +2467,6 @@ async function handleResetBranding() {
   margin-bottom: 1rem;
 }
 
-.chart-wrap {
-  position: relative;
-  height: 240px;
-  margin-bottom: 1rem;
-}
-
-.chart-wrap-doughnut {
-  height: 220px;
-}
-
 .rank-list {
   list-style: none;
   display: flex;
@@ -2744,6 +2688,21 @@ async function handleResetBranding() {
 
 .btn-act.btn-print:hover {
   background-color: #292524;
+}
+
+.btn-act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-act.btn-cancel-order {
+  background-color: transparent;
+  color: #C53030;
+  border: 1px solid #FEB2B2;
+}
+
+.btn-act.btn-cancel-order:hover {
+  background-color: #FFF5F5;
 }
 
 /* ================= MENU MANAGEMENT GRID ================= */
@@ -3368,6 +3327,22 @@ async function handleResetBranding() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.print-locked-hint {
+  grid-column: 1 / -1;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  background: var(--bg-subtle);
+  border: 1px dashed var(--border-medium);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  text-align: center;
+}
+
+.btn-print-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn-print-action {

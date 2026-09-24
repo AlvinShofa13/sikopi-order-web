@@ -34,17 +34,6 @@ export function paymentBreakdown(orders = []) {
   return [...acc.values()].sort((a, b) => b.count - a.count)
 }
 
-export function salesSummary(orders = []) {
-  return {
-    total_orders: (orders || []).length,
-    total_revenue: (orders || []).reduce((s, o) => s + (o.breakdown?.total || 0), 0),
-    total_portions: (orders || []).reduce(
-      (s, o) => s + (o.items || []).reduce((a, i) => a + (i.quantity || 1), 0),
-      0
-    )
-  }
-}
-
 export function downloadFromUrl(url, filename) {
   const a = document.createElement('a')
   a.href = url
@@ -52,10 +41,12 @@ export function downloadFromUrl(url, filename) {
   document.body.appendChild(a)
   a.click()
   a.remove()
+  if (url.startsWith('blob:')) {
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  }
 }
 
 const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-
 // Client-side CSV fallback (same columns as GET /orders/export?format=csv).
 export function ordersToCsv(orders = []) {
   const header = ['No Pesanan', 'Waktu', 'Pelanggan', 'Telepon', 'Token', 'Tipe Layanan', 'Menu', 'Qty', 'Total Order', 'Metode Bayar', 'Status Bayar']
@@ -71,4 +62,16 @@ export function ordersToCsv(orders = []) {
     }
   }
   return '\uFEFF' + lines.join('\r\n')
+}
+
+// Single source of truth untuk status bayar di UI: boolean `paid`.
+// Fallback string lama ('...Lunas') untuk data cache sebelum migrasi.
+export function isOrderPaid(order) {
+  if (!order || !order.payment) return false
+  if (typeof order.payment.paid === 'boolean') return order.payment.paid
+  return /lunas/i.test(order.payment.status || '')
+}
+
+export function paymentLabel(order) {
+  return isOrderPaid(order) ? 'Lunas' : 'Menunggu Pembayaran'
 }

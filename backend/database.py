@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 load_dotenv()
@@ -22,3 +22,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def ensure_schema():
+    """Migrasi ringan saat startup. create_all() tidak menambah/menghapus kolom
+    di tabel lama, jadi perubahan kolom diurus di sini secara idempoten."""
+    with engine.begin() as conn:
+        cols = [r[1] for r in conn.execute(text("PRAGMA table_info(orders)")).fetchall()]
+        if "is_paid" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN is_paid BOOLEAN DEFAULT 0"))
+            conn.execute(text(
+                "UPDATE orders SET is_paid = 1 "
+                "WHERE payment_status IN ('Sudah Lunas', 'Lunas', 'Sudah Dibayar')"
+            ))
+        for dead in ("qris_payload", "qris_image_url"):
+            if dead in cols:
+                conn.execute(text(f"ALTER TABLE orders DROP COLUMN {dead}"))

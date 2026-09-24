@@ -85,7 +85,17 @@ describe('bluetoothPrinter utility', () => {
       expect(text).toContain('Kopi Susu Gula Aren')
       expect(text).toContain('Less ice, normal sugar')
       expect(text).toContain('Paraf Barista / Dapur')
-      expect(text).not.toContain('LUNAS')
+      expect(text).toContain('SUDAH LUNAS')
+    })
+
+    it('supports custom dynamic brand name and token in kitchen receipt', () => {
+      const orderWithToken = {
+        ...sampleOrder,
+        customer: { ...sampleOrder.customer, token: '742' }
+      }
+      const text = generateKitchenReceiptText(orderWithToken, 32, 'Kopi Nusantara')
+      expect(text).toContain('Kopi Nusantara')
+      expect(text).toContain('#742')
     })
   })
 
@@ -97,7 +107,18 @@ describe('bluetoothPrinter utility', () => {
       expect(text).toContain('ORD-98765')
       expect(text).toContain('Budi Santoso')
       expect(text).toContain('TOTAL AKHIR')
-      expect(text).not.toContain('LUNAS')
+      expect(text).toContain('SUDAH TERBAYAR LUNAS')
+      expect(text).toContain('LUNAS (SUDAH DIBAYAR)')
+    })
+
+    it('supports custom dynamic brand name and token in customer receipt', () => {
+      const orderWithToken = {
+        ...sampleOrder,
+        customer: { ...sampleOrder.customer, token: '742' }
+      }
+      const text = generateCustomerReceiptText(orderWithToken, 32, 'Kopi Nusantara')
+      expect(text).toContain('Kopi Nusantara')
+      expect(text).toContain('#742')
     })
   })
 

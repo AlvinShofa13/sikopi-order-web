@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
+import { isCustomImage } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const store = useOrderStore()
@@ -46,11 +47,6 @@ function handleResize() {
   if (typeof window !== 'undefined' && window.innerWidth > 768 && isMobileMenuOpen.value) {
     isMobileMenuOpen.value = false
   }
-}
-
-function isCustomImage(val) {
-  if (!val) return false
-  return val.startsWith('http://') || val.startsWith('https://') || val.startsWith('data:') || val.startsWith('/')
 }
 
 onMounted(() => {

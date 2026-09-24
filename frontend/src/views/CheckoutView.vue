@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { formatRupiah } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -24,14 +25,6 @@ const customer = ref({
 const selectedMethod = ref('qris') // 'qris' | 'cash'
 const isSubmitting = ref(false)
 const errors = ref({})
-
-function formatRupiah(value) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(value)
-}
 
 function validateForm() {
   errors.value = {}

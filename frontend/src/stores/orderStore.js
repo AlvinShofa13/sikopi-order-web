@@ -56,47 +56,8 @@ export function updateBrowserFavicon(icon) {
 }
 
 export const useOrderStore = defineStore('order', () => {
-  // Menu items list - Seed Awal Resmi SIKopi (Semua Rp 1, Status Tersedia)
-  const defaultInitialMenus = [
-    {
-      id: 'menu-americano-apel',
-      name: 'Kopi Americano Sirup Apel',
-      category: 'Kopi Pilihan',
-      description: 'Double shot espresso arabika dengan sirup apel fuji segar dan air alkali dingin berkarakter menyegarkan.',
-      price: 1,
-      image: 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=700&auto=format&fit=crop&q=80',
-      is_available: true
-    },
-    {
-      id: 'menu-sdw-telur',
-      name: 'Sandwich Telur',
-      category: 'Artisan Sandwich',
-      description: 'Telur orak-arik lembut gaya Jepang dengan mayones ringan, selada segar diapit roti artisan panggang mentega.',
-      price: 1,
-      image: 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=700&auto=format&fit=crop&q=80',
-      is_available: true
-    },
-    {
-      id: 'menu-sdw-ayam',
-      name: 'Sandwich Ayam',
-      category: 'Artisan Sandwich',
-      description: 'Fillet dada ayam panggang rosemary herb, irisan tomat ceri organik, timun Kyuri renyah di atas roti ciabatta.',
-      price: 1,
-      image: 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=700&auto=format&fit=crop&q=80',
-      is_available: true
-    },
-    {
-      id: 'menu-brownies-tusuk',
-      name: 'Brownies Tusuk',
-      category: 'Camilan Sehat',
-      description: 'Brownies cokelat pekat Belgia lumer dengan taburan almond renyah, disajikan dalam tusukan kayu praktis dan higienis.',
-      price: 1,
-      image: 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=700&auto=format&fit=crop&q=80',
-      is_available: true
-    }
-  ]
-
-  const menuItems = ref([...defaultInitialMenus])
+  // Menu selalu dari backend FastAPI (tampilkan skeleton selagi memuat).
+  const menuItems = ref([])
 
   // Load saved menu from localStorage if modified locally
   // Menu items list — 100% Single Source of Truth directly from backend FastAPI database
@@ -269,30 +230,17 @@ export const useOrderStore = defineStore('order', () => {
   const currentOrder = ref(null)
   const orderHistory = ref([])
 
-  // Cleanup any legacy local caches so browser purely reads backend database
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem('hayati_orders')
-    localStorage.removeItem('sikopi_orders')
-    localStorage.removeItem('sikopi_menu_items')
-    localStorage.removeItem('sikopi_used_tokens')
-    localStorage.removeItem('sikopi_used_tokens_map')
-  }
-
   // 3-digit Token generation utility (100 - 999)
   function generate3DigitToken() {
     return String(Math.floor(100 + Math.random() * 900))
   }
 
-  // Used / Burned tokens list & mapping (reactive state)
-  const usedTokens = ref([])
+  // Used / Burned tokens mapping (reactive state; keys = token)
   const usedTokensMap = ref({})
 
   function markTokenAsUsed(token, orderId = null, customerName = 'Pelanggan') {
     if (!token) return
     const clean = String(token).trim()
-    if (!usedTokens.value.includes(clean)) {
-      usedTokens.value.push(clean)
-    }
     usedTokensMap.value[clean] = {
       orderId: orderId || null,
       customerName: customerName || 'Pelanggan',
@@ -302,8 +250,7 @@ export const useOrderStore = defineStore('order', () => {
 
   function isTokenUsed(token) {
     if (!token) return false
-    const clean = String(token).trim()
-    return usedTokens.value.includes(clean) || Boolean(usedTokensMap.value[clean])
+    return Boolean(usedTokensMap.value[String(token).trim()])
   }
 
   // Active 3-digit Token state - always initialize with a random valid 3-digit token
@@ -456,7 +403,7 @@ export const useOrderStore = defineStore('order', () => {
   function generateNewToken() {
     let newToken = generate3DigitToken()
     let attempts = 0
-    while ((usedTokens.value.includes(newToken) || usedTokensMap.value[newToken]) && attempts < 100) {
+    while (usedTokensMap.value[newToken] && attempts < 100) {
       newToken = generate3DigitToken()
       attempts++
     }
@@ -489,7 +436,7 @@ export const useOrderStore = defineStore('order', () => {
   // Initialize active token & customer session from localStorage if saved
   if (typeof localStorage !== 'undefined') {
     const savedToken = localStorage.getItem('sikopi_active_token')
-    if (savedToken && !usedTokens.value.includes(savedToken) && !usedTokensMap.value[savedToken]) {
+    if (savedToken && !usedTokensMap.value[savedToken]) {
       activeToken.value = savedToken
       tokenGeneratedAt.value = localStorage.getItem('sikopi_token_time') || new Date().toISOString()
     }
@@ -498,13 +445,13 @@ export const useOrderStore = defineStore('order', () => {
     const savedCustToken = localStorage.getItem('sikopi_cust_token')
     const isVerified = localStorage.getItem('sikopi_cust_verified') === 'true'
 
-    if (savedName && isVerified && savedCustToken && !usedTokens.value.includes(savedCustToken)) {
+    if (savedName && isVerified && savedCustToken && !usedTokensMap.value[savedCustToken]) {
       customerSession.value = {
         name: savedName,
         token: savedCustToken,
         isVerified: true
       }
-    } else if (savedCustToken && (usedTokens.value.includes(savedCustToken) || usedTokensMap.value[savedCustToken])) {
+    } else if (savedCustToken && usedTokensMap.value[savedCustToken]) {
       clearCustomerSession()
     }
   }
@@ -523,7 +470,7 @@ export const useOrderStore = defineStore('order', () => {
 
     // 1. Check local burned tokens
     const burnedInfo = usedTokensMap.value[cleanToken]
-    if (burnedInfo || usedTokens.value.includes(cleanToken)) {
+    if (burnedInfo) {
       const linkedOrderId = burnedInfo?.orderId || null
       return {
         success: false,
@@ -613,9 +560,7 @@ export const useOrderStore = defineStore('order', () => {
         method: paymentDetails.method,
         label: paymentDetails.label || (isQris ? 'QRIS' : 'Bayar di Kasir (Tunai / EDC)'),
         reference: paymentDetails.reference || `REF-${Math.floor(100000 + Math.random() * 900000)}`,
-        status: 'Menunggu Pembayaran',
-        qrisPayload: paymentDetails.qrisPayload || null,
-        qrisImageUrl: paymentDetails.qrisImageUrl || null
+        status: 'Menunggu Pembayaran'
       },
       items: JSON.parse(JSON.stringify(cart.value)),
       breakdown: {
@@ -624,7 +569,6 @@ export const useOrderStore = defineStore('order', () => {
         tax: tax.value,
         total: grandTotal.value
       },
-      estimatedMinutes: 10,
       orderStatus: 'Diterima & Disiapkan'
     }
 
@@ -689,7 +633,6 @@ export const useOrderStore = defineStore('order', () => {
     const res = await api.tokens.getBurned()
     if (res.ok && res.data) {
       usedTokensMap.value = { ...usedTokensMap.value, ...res.data }
-      usedTokens.value = Object.keys(usedTokensMap.value)
     }
   }
 
@@ -718,7 +661,6 @@ export const useOrderStore = defineStore('order', () => {
     orderHistory,
     activeToken,
     tokenGeneratedAt,
-    usedTokens,
     usedTokensMap,
     markTokenAsUsed,
     isTokenUsed,

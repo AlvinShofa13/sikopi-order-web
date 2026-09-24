@@ -73,8 +73,6 @@ class PaymentPayload(BaseModel):
     label: Optional[str] = "QRIS"
     reference: Optional[str] = None
     status: Optional[str] = "Menunggu Pembayaran"
-    qrisPayload: Optional[str] = None
-    qrisImageUrl: Optional[str] = None
 
 
 class BreakdownPayload(BaseModel):
@@ -91,54 +89,10 @@ class OrderCreate(BaseModel):
     breakdown: Optional[BreakdownPayload] = None
 
 
-class OrderItemDetail(BaseModel):
-    id: Optional[int] = None
-    menu_item_id: Optional[str] = None
-    name: str
-    price: float
-    quantity: int
-    notes: Optional[str] = ""
-    subtotal: float
-
-
-class CustomerDetail(BaseModel):
-    name: str
-    phone: str
-    token: Optional[str] = None
-    orderType: str
-    tableOrAddress: str
-    specialRequest: str
-
-
-class PaymentDetail(BaseModel):
-    method: str
-    label: str
-    reference: Optional[str] = None
-    status: str
-    qrisPayload: Optional[str] = None
-    qrisImageUrl: Optional[str] = None
-
-
-class BreakdownDetail(BaseModel):
-    subtotal: float
-    ecoFee: float
-    tax: float
-    total: float
-
-
-class OrderResponse(BaseModel):
-    orderId: str
-    createdAt: str
-    customer: CustomerDetail
-    payment: PaymentDetail
-    items: List[OrderItemDetail]
-    breakdown: BreakdownDetail
-    orderStatus: str
-
-
 class OrderStatusUpdate(BaseModel):
     order_status: Optional[str] = None
     payment_status: Optional[str] = None
+    is_paid: Optional[bool] = None
 
 
 # --- Token Schemas ---

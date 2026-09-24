@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
+import { formatRupiah } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -11,14 +12,6 @@ const store = useOrderStore()
 const featuredItems = computed(() => {
   return store.menuItems.filter(item => item.featured).slice(0, 3)
 })
-
-function formatRupiah(value) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(value)
-}
 
 function handleAddToCart(item) {
   if (!store.customerSession.isVerified) {

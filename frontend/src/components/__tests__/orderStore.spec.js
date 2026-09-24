@@ -1,23 +1,63 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
+
+vi.mock('@/services/api', () => ({
+  api: {
+    baseUrl: 'http://localhost:8005/api',
+    fileUrl: (p) => p,
+    auth: { login: vi.fn(), logout: vi.fn() },
+    menu: {
+      getAll: vi.fn().mockResolvedValue({
+        ok: true,
+        data: [{ id: 'm1', name: 'Kopi', category: 'Kopi Pilihan', description: '', price: 1, image: '', is_available: true }]
+      }),
+      toggle: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn(),
+      uploadImage: vi.fn()
+    },
+    tokens: {
+      generate: vi.fn().mockResolvedValue({ ok: false }),
+      getActive: vi.fn().mockResolvedValue({ ok: false }),
+      verify: vi.fn().mockResolvedValue({ ok: false }),
+      getBurned: vi.fn().mockResolvedValue({ ok: false })
+    },
+    orders: {
+      getAll: vi.fn().mockResolvedValue({ ok: false }),
+      create: vi.fn().mockResolvedValue({ ok: false })
+    },
+    settings: {
+      getBranding: vi.fn().mockResolvedValue({ ok: false }),
+      updateBranding: vi.fn().mockResolvedValue({ ok: false })
+    }
+  }
+}))
+
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+async function seededStore() {
+  const store = useOrderStore()
+  await flush()
+  return store
+}
 
 describe('Order Store & Flow', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     localStorage.clear()
+    vi.clearAllMocks()
   })
 
-  it('initializes with healthy food items and empty cart', () => {
-    const store = useOrderStore()
+  it('initializes with menu items from backend and empty cart', async () => {
+    const store = await seededStore()
     expect(store.menuItems.length).toBeGreaterThan(0)
     expect(store.cart.length).toBe(0)
     expect(store.cartCount).toBe(0)
     expect(store.subtotal).toBe(0)
   })
 
-  it('adds item to cart and calculates subtotal and taxes correctly', () => {
-    const store = useOrderStore()
+  it('adds item to cart and calculates subtotal and taxes correctly', async () => {
+    const store = await seededStore()
     const firstItem = store.menuItems[0]
 
     store.addToCart(firstItem)
@@ -29,8 +69,8 @@ describe('Order Store & Flow', () => {
     expect(store.grandTotal).toBe(1)
   })
 
-  it('updates quantity and removes item when quantity reaches zero', () => {
-    const store = useOrderStore()
+  it('updates quantity and removes item when quantity reaches zero', async () => {
+    const store = await seededStore()
     const firstItem = store.menuItems[0]
 
     store.addToCart(firstItem)
@@ -42,8 +82,8 @@ describe('Order Store & Flow', () => {
     expect(store.cartCount).toBe(0)
   })
 
-  it('places order, generates order number, and clears active cart', () => {
-    const store = useOrderStore()
+  it('places order, generates order number, and clears active cart', async () => {
+    const store = await seededStore()
     store.addToCart(store.menuItems[0])
 
     const customerData = {
@@ -90,8 +130,8 @@ describe('Order Store & Flow', () => {
     expect(store.activeToken).toBe(newToken)
   })
 
-  it('validates customer token and saves customer session name', () => {
-    const store = useOrderStore()
+  it('validates customer token and saves customer session name', async () => {
+    const store = await seededStore()
     const token = store.activeToken
 
     // Invalid token fails
@@ -112,8 +152,8 @@ describe('Order Store & Flow', () => {
     expect(createdOrder.customer.name).toBe('Rian Anggoro')
   })
 
-  it('strictly enforces one-time token use: burns token upon placeOrder and prevents reuse', () => {
-    const store = useOrderStore()
+  it('strictly enforces one-time token use: burns token upon placeOrder and prevents reuse', async () => {
+    const store = await seededStore()
     const initialToken = store.activeToken
 
     // Customer verifies with current token
@@ -127,8 +167,8 @@ describe('Order Store & Flow', () => {
     const createdOrder = store.getOrderById(orderId)
     expect(createdOrder.customer.name).toBe('Dewi Sartika')
 
-    // Token must be burned and marked in usedTokens
-    expect(store.usedTokens).toContain(initialToken)
+    // Token must be burned and marked in usedTokensMap
+    expect(store.usedTokensMap[initialToken]).toBeTruthy()
     expect(store.isTokenUsed(initialToken)).toBe(true)
 
     // Customer session must be reset for next order

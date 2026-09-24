@@ -1,8 +1,10 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
+import { isOrderPaid, paymentLabel } from '@/utils/salesAnalytics'
+import { formatRupiah } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const route = useRoute()
@@ -16,26 +18,44 @@ const order = computed(() => {
   return store.getOrderById(orderId.value)
 })
 
+const orderPaid = computed(() => isOrderPaid(order.value))
+
+// Polling status bayar: berhenti otomatis saat lunas / keluar halaman.
+let statusPollTimer = null
+
+async function refreshPaymentStatus() {
+  if (!orderId.value || isOrderPaid(store.getOrderById(orderId.value))) {
+    stopStatusPolling()
+    return
+  }
+  const res = await api.orders.getById(orderId.value)
+  if (res.ok && res.data) {
+    store.handleIncomingOrder(res.data)
+    if (isOrderPaid(res.data)) stopStatusPolling()
+  }
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
+}
+
 onMounted(async () => {
   if (!order.value) {
     // Ambil satu pesanan milik sendiri (endpoint publik); jangan tarik seluruh daftar.
     const res = await api.orders.getById(orderId.value)
-    if (res.ok && res.data) {
-      store.handleIncomingOrder(res.data)
-    } else {
-      await store.refreshOrdersFromDB()
-    }
+    if (res.ok && res.data) store.handleIncomingOrder(res.data)
+  }
+  if (!isOrderPaid(store.getOrderById(orderId.value))) {
+    statusPollTimer = setInterval(refreshPaymentStatus, 3000)
   }
 })
 
-function formatRupiah(value) {
-  if (!value) return 'Rp 0'
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0
-  }).format(value)
-}
+onUnmounted(() => {
+  stopStatusPolling()
+})
 
 function formatDate(isoString) {
   if (!isoString) return new Date().toLocaleString('id-ID')
@@ -220,8 +240,8 @@ function startNewOrder() {
           </div>
           <div class="meta-item">
             <span class="meta-label">Status Pembayaran</span>
-            <span class="meta-val payment-status-badge">
-              {{ order?.payment?.status || 'Menunggu Pembayaran di Kasir' }}
+            <span class="meta-val payment-status-badge" :class="{ paid: orderPaid }">
+              {{ paymentLabel(order) }}
             </span>
           </div>
           <div class="meta-item">
@@ -651,6 +671,10 @@ function startNewOrder() {
   font-size: 0.8rem;
   font-weight: 600;
   color: #B45309;
+}
+
+.payment-status-badge.paid {
+  color: var(--color-primary);
 }
 
 .receipt-section-heading {
