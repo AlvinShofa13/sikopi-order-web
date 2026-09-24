@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -162,7 +163,7 @@ function goToMenu() {
         <div class="menu-grid">
           <div v-for="item in featuredItems" :key="item.id" class="food-card">
             <div class="card-image-box">
-              <img :src="item.image" :alt="item.name" class="food-image" />
+              <img :src="api.fileUrl(item.image)" :alt="item.name" class="food-image" />
             </div>
             <div class="card-body">
               <div class="card-meta">

@@ -158,13 +158,14 @@ async function handleSubmit() {
 .token-modal-overlay {
   position: fixed;
   inset: 0;
-  z-index: 999;
+  z-index: 1100;
   background-color: rgba(23, 33, 24, 0.65);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow-y: auto;
   padding: 1.5rem;
   animation: fadeIn 0.2s ease;
 }
@@ -178,6 +179,7 @@ async function handleSubmit() {
   position: relative;
   width: 100%;
   max-width: 480px;
+  margin: auto;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-lg);

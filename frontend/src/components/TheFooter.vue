@@ -1,5 +1,6 @@
 <script setup>
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const store = useOrderStore()
@@ -16,7 +17,7 @@ function isCustomImage(val) {
       <div class="footer-brand-col">
         <div class="footer-logo">
           <span class="logo-box">
-            <img v-if="isCustomImage(store.brandIcon)" :src="store.brandIcon" alt="Logo" class="footer-logo-img" />
+            <img v-if="isCustomImage(store.brandIcon)" :src="api.fileUrl(store.brandIcon)" alt="Logo" class="footer-logo-img" />
             <AppIcon v-else :name="store.brandIcon || 'leaf'" :size="18" />
           </span>
           <span class="footer-name">{{ store.brandName || 'SIKopi' }}</span>

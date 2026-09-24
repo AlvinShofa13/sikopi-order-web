@@ -52,6 +52,15 @@ async function request(endpoint, options = {}) {
 
 export const api = {
   baseUrl: API_BASE_URL,
+  // Uploads (/uploads/...) live on the backend host, while the frontend
+  // may be served elsewhere (e.g. Vercel). Prefix relative paths so
+  // images keep resolving in production. Absolute URLs pass through.
+  fileUrl(path) {
+    if (!path) return ''
+    if (/^https?:\/\//i.test(path)) return path
+    const origin = API_BASE_URL.replace(/\/api\/?$/, '')
+    return `${origin}${path.startsWith('/') ? path : `/${path}`}`
+  },
   // Auth
   auth: {
     async login(email, password) {
@@ -136,6 +145,10 @@ export const api = {
     },
     exportUrl(format = 'xlsx') {
       return `${API_BASE_URL}/orders/export?format=${format}`
+    },
+    wsUrl(token = '') {
+      const wsBase = API_BASE_URL.replace(/^http/, 'ws')
+      return `${wsBase}/orders/ws?token=${encodeURIComponent(token || '')}`
     },
     async getById(orderId) {
       return request(`/orders/${orderId}`)

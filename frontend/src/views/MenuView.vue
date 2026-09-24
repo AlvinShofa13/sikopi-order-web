@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -216,7 +217,7 @@ function goToCart() {
             :class="{ 'item-out-of-stock': item.is_available === false }"
           >
             <div class="card-media">
-              <img :src="item.image" :alt="item.name" class="item-img" loading="lazy" />
+              <img :src="api.fileUrl(item.image)" :alt="item.name" class="item-img" loading="lazy" />
               <div v-if="item.is_available === false" class="out-of-stock-overlay">
                 <span class="out-of-stock-pill">Habis</span>
               </div>

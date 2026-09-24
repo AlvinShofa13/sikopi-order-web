@@ -107,11 +107,8 @@ function connectWebSocket() {
       wsClient = null
     }
 
-    const isHttps = window.location.protocol === 'https:'
-    const wsProto = isHttps ? 'wss:' : 'ws:'
-    const wsHost = window.location.hostname === 'localhost' ? 'localhost:8005' : window.location.host
     const wsToken = adminStore.authToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_admin_token') : '') || ''
-    const wsUrl = `${wsProto}//${wsHost}/api/orders/ws?token=${encodeURIComponent(wsToken)}`
+    const wsUrl = api.orders.wsUrl(wsToken)
 
     wsClient = new WebSocket(wsUrl)
 
@@ -742,7 +739,7 @@ async function handleResetBranding() {
       <div class="login-card">
         <div class="login-brand text-center">
           <div class="brand-shield-box">
-            <img v-if="isCustomImage(store.brandIcon)" :src="store.brandIcon" alt="Logo" class="brand-icon-img" />
+            <img v-if="isCustomImage(store.brandIcon)" :src="api.fileUrl(store.brandIcon)" alt="Logo" class="brand-icon-img" />
             <AppIcon v-else :name="store.brandIcon || 'leaf'" :size="28" />
           </div>
           <h1 class="brand-heading">{{ store.brandName || 'SIKopi' }} Admin & Kasir</h1>
@@ -814,13 +811,10 @@ async function handleResetBranding() {
               <img v-if="isCustomImage(store.brandIcon)" :src="store.brandIcon" alt="Logo" class="brand-icon-img" />
               <AppIcon v-else :name="store.brandIcon || 'leaf'" :size="20" stroke-width="2" />
             </div>
-            <div>
-              <span class="nav-brand-title">{{ store.brandName || 'SIKopi' }} Kasir</span>
-              <span class="nav-brand-tag">Panel Operasional</span>
-            </div>
+            <span class="nav-brand-title">{{ store.brandName || 'SIKopi' }} Kasir</span>
           </div>
 
-          <!-- Navigation Tabs -->
+          <!-- Navigation Tabs (tanpa ikon, hanya teks) -->
           <nav class="admin-nav-tabs">
             <button 
               type="button" 
@@ -828,7 +822,6 @@ async function handleResetBranding() {
               :class="{ active: activeTab === 'orders' }"
               @click="activeTab = 'orders'"
             >
-              <AppIcon name="receipt" :size="16" />
               <span>Pesanan Masuk</span>
               <span class="tab-badge" v-if="orderHistory.length > 0">{{ orderHistory.length }}</span>
             </button>
@@ -838,7 +831,6 @@ async function handleResetBranding() {
               :class="{ active: activeTab === 'menus' }"
               @click="activeTab = 'menus'"
             >
-              <AppIcon name="bag" :size="16" />
               <span>Kelola Menu</span>
               <span class="tab-badge">{{ menuItems.length }}</span>
             </button>
@@ -848,7 +840,6 @@ async function handleResetBranding() {
               :class="{ active: activeTab === 'tokens' }"
               @click="activeTab = 'tokens'"
             >
-              <AppIcon name="shield-check" :size="16" />
               <span>Token Hangus</span>
             </button>
             <button 
@@ -857,7 +848,6 @@ async function handleResetBranding() {
               :class="{ active: activeTab === 'analisis' }"
               @click="openAnalyticsTab"
             >
-              <AppIcon name="chart" :size="16" />
               <span>Analisis</span>
             </button>
             <button 
@@ -866,7 +856,6 @@ async function handleResetBranding() {
               :class="{ active: activeTab === 'branding' }"
               @click="activeTab = 'branding'"
             >
-              <AppIcon name="sparkles" :size="16" />
               <span>Ikon & Brand</span>
             </button>
           </nav>
@@ -1120,7 +1109,7 @@ async function handleResetBranding() {
               :class="{ 'is-out-of-stock': item.is_available === false }"
             >
               <div class="card-thumb">
-                <img :src="item.image" :alt="item.name" class="thumb-img" />
+                <img :src="api.fileUrl(item.image)" :alt="item.name" class="thumb-img" />
                 <span 
                   class="stock-status-pill"
                   :class="item.is_available !== false ? 'available' : 'empty'"
@@ -1330,7 +1319,7 @@ async function handleResetBranding() {
                   <div class="browser-tab-bar">
                     <div class="browser-tab active-tab-mock">
                       <span class="mock-favicon-wrap">
-                        <img v-if="isCustomImage(brandingForm.icon)" :src="brandingForm.icon" alt="Favicon" class="mock-favicon-img" />
+                        <img v-if="isCustomImage(brandingForm.icon)" :src="api.fileUrl(brandingForm.icon)" alt="Favicon" class="mock-favicon-img" />
                         <AppIcon v-else :name="brandingForm.icon || 'leaf'" :size="14" />
                       </span>
                       <span class="mock-tab-title">{{ (brandingForm.name || 'sikopi').toLowerCase() }} | Kopi Pilihan & Santapan Bernutrisi</span>
@@ -1354,7 +1343,7 @@ async function handleResetBranding() {
                 <div class="navbar-preview-mockup">
                   <div class="navbar-mock-left">
                     <div class="mock-brand-box">
-                      <img v-if="isCustomImage(brandingForm.icon)" :src="brandingForm.icon" alt="Brand Logo" class="mock-brand-img" />
+                      <img v-if="isCustomImage(brandingForm.icon)" :src="api.fileUrl(brandingForm.icon)" alt="Brand Logo" class="mock-brand-img" />
                       <AppIcon v-else :name="brandingForm.icon || 'leaf'" :size="20" stroke-width="2" />
                     </div>
                     <div class="mock-brand-texts">
@@ -1428,7 +1417,7 @@ async function handleResetBranding() {
                   :class="{ 'is-uploading': isUploadingBrandLogo }"
                 >
                   <div v-if="isCustomImage(brandingForm.icon)" class="custom-logo-active-preview">
-                    <img :src="brandingForm.icon" alt="Logo Kustom" class="active-logo-thumb" />
+                    <img :src="api.fileUrl(brandingForm.icon)" alt="Logo Kustom" class="active-logo-thumb" />
                     <div class="active-logo-info">
                       <strong>Logo Kustom Sedang Aktif</strong>
                       <span>Klik area ini untuk mengganti dengan gambar lain</span>
@@ -1801,7 +1790,7 @@ async function handleResetBranding() {
               <!-- Kotak Dropzone / Preview -->
               <div class="image-uploader-card" :class="{ 'has-preview': !!menuForm.image }">
                 <div v-if="menuForm.image" class="preview-wrap">
-                  <img :src="menuForm.image" alt="Preview Gambar Menu" class="preview-image" />
+                  <img :src="api.fileUrl(menuForm.image)" alt="Preview Gambar Menu" class="preview-image" />
                   <div class="preview-actions">
                     <button 
                       type="button" 
@@ -2082,16 +2071,19 @@ async function handleResetBranding() {
 }
 
 .admin-nav-inner {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  height: 68px;
+  gap: 12px;
+  min-height: 60px;
+  padding: 8px 0;
 }
 
 .nav-brand-group {
   display: flex;
   align-items: center;
   gap: 10px;
+  justify-self: start;
 }
 
 .brand-icon-box {
@@ -2123,19 +2115,32 @@ async function handleResetBranding() {
 .admin-nav-tabs {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  min-width: 0;
+  justify-self: center;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding-bottom: 2px;
+}
+
+.admin-nav-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-tab-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
+  gap: 5px;
+  padding: 7px 12px;
   border-radius: var(--radius-full);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: var(--color-text-muted);
   transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-tab-btn:hover {
@@ -2164,7 +2169,9 @@ async function handleResetBranding() {
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-self: end;
 }
+
 
 .realtime-status-pill {
   display: inline-flex;
@@ -4310,6 +4317,7 @@ async function handleResetBranding() {
 }
 
 /* ================= RESPONSIVE: TABLET & MOBILE ADMIN ================= */
+
 @media (max-width: 1024px) {
   .admin-stats-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -4324,13 +4332,26 @@ async function handleResetBranding() {
 }
 
 @media (max-width: 768px) {
-  .admin-header-inner,
-  .admin-nav-inner {
+  .admin-header-inner {
     flex-direction: column;
     align-items: stretch;
     gap: 0.85rem;
     height: auto;
     padding: 0.85rem 1rem;
+  }
+  .admin-nav-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 6px 0;
+    min-height: auto;
+    gap: 6px;
+  }
+  .admin-nav-tabs {
+    justify-self: unset;
+  }
+  .nav-user-actions {
+    justify-self: unset;
   }
   .header-actions,
   .nav-user-actions {
@@ -4342,18 +4363,20 @@ async function handleResetBranding() {
   .admin-tabs,
   .admin-nav-tabs {
     overflow-x: auto;
-    width: 100%;
-    padding-bottom: 6px;
+    padding-bottom: 4px;
     -webkit-overflow-scrolling: touch;
     justify-content: flex-start;
-    gap: 6px;
+    gap: 4px;
   }
   .tab-btn,
   .nav-tab-btn {
     white-space: nowrap;
-    padding: 8px 14px;
-    font-size: 0.82rem;
+    padding: 6px 10px;
+    font-size: 0.78rem;
     flex-shrink: 0;
+  }
+  .nav-brand-title {
+    font-size: 0.95rem;
   }
   .menu-admin-grid {
     grid-template-columns: 1fr;

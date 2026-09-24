@@ -56,5 +56,11 @@ onMounted(() => {
 
 .main-content {
   flex: 1;
+  padding-top: 72px; /* Offset for fixed navbar height */
+}
+
+/* Remove padding offset for admin page since admin has its own navbar */
+.is-admin-page .main-content {
+  padding-top: 0;
 }
 </style>

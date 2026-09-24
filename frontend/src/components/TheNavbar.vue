@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const store = useOrderStore()
@@ -70,7 +71,7 @@ onUnmounted(() => {
       <!-- Brand Logo -->
       <RouterLink to="/menu" class="brand-link" @click="closeMobileMenu">
         <span class="brand-icon-box">
-          <img v-if="isCustomImage(store.brandIcon)" :src="store.brandIcon" alt="Logo" class="brand-icon-img" />
+          <img v-if="isCustomImage(store.brandIcon)" :src="api.fileUrl(store.brandIcon)" alt="Logo" class="brand-icon-img" />
           <AppIcon v-else :name="store.brandIcon || 'leaf'" :size="20" stroke-width="2" />
         </span>
         <div class="brand-text">
@@ -260,12 +261,15 @@ onUnmounted(() => {
 
 <style scoped>
 .navbar-wrapper {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
   z-index: 1000;
-  background-color: rgba(250, 248, 245, 0.94);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background-color: rgba(250, 248, 245, 0.96);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border-light);
   transition: background-color 0.2s ease;
 }

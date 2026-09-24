@@ -1,6 +1,7 @@
 <script setup>
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -94,7 +95,7 @@ function continueShopping() {
           <div class="items-list">
             <div v-for="item in store.cart" :key="item.id" class="cart-item-card">
               <div class="item-visual">
-                <img :src="item.image" :alt="item.name" class="item-thumbnail" />
+                <img :src="api.fileUrl(item.image)" :alt="item.name" class="item-thumbnail" />
               </div>
 
               <div class="item-details">
