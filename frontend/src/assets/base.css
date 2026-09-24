@@ -1,0 +1,7 @@
+/* Base CSS variables for Hayati Eatery */
+:root {
+  --color-background: var(--bg-primary);
+  --color-surface: var(--bg-surface);
+  --color-text: var(--color-text-main);
+  --color-border: var(--border-light);
+}

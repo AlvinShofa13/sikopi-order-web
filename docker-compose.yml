@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  sikopi-backend-8005:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sikopi_backend_8005
+    ports:
+      - "8005:8000"
+    volumes:
+      # Persist SQLite database file
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    # NOTE: jangan tambah blok `environment:` untuk ADMIN_PASSWORD/SECRET_KEY di sini —
+    # `environment:` menimpa `env_file`, dan substitusi kosong akan mengosongkan secret di container.
+    restart: unless-stopped
