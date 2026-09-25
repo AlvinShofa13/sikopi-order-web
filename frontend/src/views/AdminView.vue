@@ -125,6 +125,9 @@ function connectWebSocket() {
           if (idx !== -1) {
             store.orderHistory[idx] = data.order
           }
+          if (selectedOrder.value && selectedOrder.value.orderId === data.order.orderId) {
+            selectedOrder.value = data.order
+          }
         }
       } catch {
         // ignore non-json messages
@@ -440,6 +443,44 @@ async function markOrderAsPaid(order) {
   }
 }
 
+// Preparation Status Update (Dapur & Barista)
+function normalizePrepStatus(status) {
+  if (status === 'Siap Diambil' || status === 'Siap Disajikan') return 'Siap Diambil'
+  if (status === 'Selesai') return 'Selesai'
+  return 'Sedang Disiapkan'
+}
+
+function getPrepClass(status) {
+  const s = normalizePrepStatus(status)
+  if (s === 'Siap Diambil') return 'prep-ready'
+  if (s === 'Selesai') return 'prep-done'
+  return 'prep-cooking'
+}
+
+async function handleUpdatePrepStatus(order, newStatus) {
+  if (!order) return
+  const prevStatus = order.orderStatus
+  try {
+    order.orderStatus = newStatus
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = newStatus
+    }
+    const res = await api.orders.updateStatus(order.orderId, { order_status: newStatus })
+    if (!res.ok) throw new Error(res.error || 'Gagal memperbarui status penyiapan.')
+    
+    if (store.broadcastOrderStatusUpdate) {
+      store.broadcastOrderStatusUpdate(order.orderId, { orderStatus: newStatus })
+    }
+    showToast(`Status penyiapan #${order.orderId} diubah ke "${newStatus}".`)
+  } catch (err) {
+    order.orderStatus = prevStatus
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = prevStatus
+    }
+    showToast(err.message || 'Gagal memperbarui status.', 'error')
+  }
+}
+
 // Pembatalan pesanan (Admin saja, permanen)
 async function handleCancelOrder(order) {
   if (!order) return
@@ -701,7 +742,7 @@ async function handleResetBranding() {
                 id="login-email"
                 v-model="inputEmail" 
                 type="email" 
-                placeholder="admin@sikopi.com"
+                placeholder="user@domain.com"
                 class="admin-input"
                 required
               />
@@ -969,6 +1010,7 @@ async function handleResetBranding() {
                   <th>Total Biaya</th>
                   <th>Metode Bayar</th>
                   <th>Status Bayar</th>
+                  <th>Penyiapan</th>
                   <th>Aksi Kasir</th>
                 </tr>
               </thead>
@@ -1002,6 +1044,19 @@ async function handleResetBranding() {
                     >
                       {{ ord.payment?.paid ? 'Lunas' : 'Menunggu Pembayaran' }}
                     </span>
+                  </td>
+                  <td class="col-prep-status">
+                    <select 
+                      class="select-prep-status"
+                      :class="getPrepClass(ord.orderStatus)"
+                      :value="normalizePrepStatus(ord.orderStatus)"
+                      @change="handleUpdatePrepStatus(ord, $event.target.value)"
+                      title="Ubah status penyiapan (mengirim notifikasi ke pelanggan jika Siap Diambil)"
+                    >
+                      <option value="Sedang Disiapkan">Sedang Disiapkan</option>
+                      <option value="Siap Diambil">Siap Diambil</option>
+                      <option value="Selesai">Selesai</option>
+                    </select>
                   </td>
                   <td class="col-actions">
                     <div class="actions-row">
@@ -1557,6 +1612,53 @@ async function handleResetBranding() {
                 >
                   <AppIcon name="check" :size="18" />
                   <span>{{ selectedOrder.payment?.paid ? 'Pembayaran Telah Lunas' : 'Konfirmasi Sudah Dibayar' }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Preparation Status Controls (Dapur & Barista) -->
+            <div class="detail-prep-control-card">
+              <div class="prep-control-head">
+                <div class="prep-title-group">
+                  <AppIcon name="clock" :size="16" />
+                  <span class="prep-control-title">Status Penyiapan Hidangan:</span>
+                </div>
+                <span class="prep-status-badge" :class="getPrepClass(selectedOrder.orderStatus)">
+                  {{ normalizePrepStatus(selectedOrder.orderStatus) }}
+                </span>
+              </div>
+              <p class="prep-control-sub">
+                Mengubah ke status <strong>"Siap Diambil"</strong> akan otomatis mengirimkan bunyi lonceng & notifikasi ke perangkat pelanggan.
+              </p>
+              <div class="prep-pill-group">
+                <button 
+                  type="button" 
+                  class="btn-prep-opt"
+                  :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Sedang Disiapkan' }"
+                  @click="handleUpdatePrepStatus(selectedOrder, 'Sedang Disiapkan')"
+                >
+                  <AppIcon name="clock" :size="14" />
+                  <span>Sedang Disiapkan</span>
+                </button>
+
+                <button 
+                  type="button" 
+                  class="btn-prep-opt opt-ready"
+                  :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Siap Diambil' }"
+                  @click="handleUpdatePrepStatus(selectedOrder, 'Siap Diambil')"
+                >
+                  <AppIcon name="sparkles" :size="14" />
+                  <span>Siap Diambil (Kirim Notif)</span>
+                </button>
+
+                <button 
+                  type="button" 
+                  class="btn-prep-opt opt-done"
+                  :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Selesai' }"
+                  @click="handleUpdatePrepStatus(selectedOrder, 'Selesai')"
+                >
+                  <AppIcon name="check" :size="14" />
+                  <span>Selesai</span>
                 </button>
               </div>
             </div>
@@ -3213,6 +3315,148 @@ async function handleResetBranding() {
 .btn-mark-paid:disabled {
   background-color: #A3BFB0;
   cursor: default;
+}
+
+/* Preparation Status Controls in Modal */
+.detail-prep-control-card {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.5rem;
+}
+
+.prep-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.prep-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-primary);
+}
+
+.prep-control-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--color-charcoal);
+}
+
+.prep-control-sub {
+  font-size: 0.76rem;
+  color: var(--color-text-subtle);
+  margin-bottom: 0.85rem;
+  line-height: 1.35;
+}
+
+.prep-status-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+}
+
+.prep-status-badge.prep-cooking {
+  background-color: var(--color-peach-soft);
+  color: var(--color-peach);
+  border: 1px solid #F5D3C4;
+}
+
+.prep-status-badge.prep-ready {
+  background-color: #DCFCE7;
+  color: #15803D;
+  border: 1px solid #86EFAC;
+}
+
+.prep-status-badge.prep-done {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+  border: 1px solid var(--border-medium);
+}
+
+.prep-pill-group {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.btn-prep-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-prep-opt:hover {
+  background-color: var(--bg-subtle);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-prep-opt.active {
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 6px rgba(45, 90, 61, 0.2);
+}
+
+.btn-prep-opt.opt-ready.active {
+  background-color: #16A34A;
+  border-color: #16A34A;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.3);
+}
+
+.btn-prep-opt.opt-done.active {
+  background-color: #475569;
+  border-color: #475569;
+}
+
+/* Preparation Select in Orders Table */
+.col-prep-status {
+  text-align: center;
+}
+
+.select-prep-status {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+
+.select-prep-status.prep-cooking {
+  background-color: var(--color-peach-soft);
+  color: var(--color-peach);
+  border-color: #F5D3C4;
+}
+
+.select-prep-status.prep-ready {
+  background-color: #DCFCE7;
+  color: #15803D;
+  border-color: #86EFAC;
+  font-weight: 700;
+}
+
+.select-prep-status.prep-done {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+  border-color: var(--border-medium);
 }
 
 /* Detail Items Box */

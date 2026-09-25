@@ -328,6 +328,25 @@ export const useOrderStore = defineStore('order', () => {
             }
           }
         }
+        if (type === 'ORDER_STATUS_UPDATED' && payload?.orderId) {
+          const ord = orderHistory.value.find(o => o.orderId === payload.orderId)
+          if (ord) {
+            if (payload.orderStatus) ord.orderStatus = payload.orderStatus
+            if (payload.payment) ord.payment = { ...ord.payment, ...payload.payment }
+            if (payload.is_paid !== undefined && ord.payment) {
+              ord.payment.paid = payload.is_paid
+              if (payload.is_paid) ord.payment.status = 'Lunas'
+            }
+          }
+          if (currentOrder.value && currentOrder.value.orderId === payload.orderId) {
+            if (payload.orderStatus) currentOrder.value.orderStatus = payload.orderStatus
+            if (payload.payment) currentOrder.value.payment = { ...currentOrder.value.payment, ...payload.payment }
+            if (payload.is_paid !== undefined && currentOrder.value.payment) {
+              currentOrder.value.payment.paid = payload.is_paid
+              if (payload.is_paid) currentOrder.value.payment.status = 'Lunas'
+            }
+          }
+        }
       }
     } catch {
       syncChannel = null
@@ -342,6 +361,10 @@ export const useOrderStore = defineStore('order', () => {
         // ignore
       }
     }
+  }
+
+  function broadcastOrderStatusUpdate(orderId, patchData = {}) {
+    broadcastChange('ORDER_STATUS_UPDATED', { orderId, ...patchData })
   }
 
   async function fetchBrandingSettings() {
@@ -686,6 +709,7 @@ export const useOrderStore = defineStore('order', () => {
     removeFromCart,
     clearCart,
     placeOrder,
-    getOrderById
+    getOrderById,
+    broadcastOrderStatusUpdate
   }
 })

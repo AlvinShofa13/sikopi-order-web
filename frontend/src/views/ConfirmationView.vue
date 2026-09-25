@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
@@ -20,18 +20,122 @@ const order = computed(() => {
 
 const orderPaid = computed(() => isOrderPaid(order.value))
 
-// Polling status bayar: berhenti otomatis saat lunas / keluar halaman.
+// Status Penyiapan Dinamis
+const isStep2Active = computed(() => {
+  const st = order.value?.orderStatus
+  return st === 'Diterima & Disiapkan' || st === 'Sedang Disiapkan' || isStep3Active.value
+})
+
+const isStep3Active = computed(() => {
+  const st = order.value?.orderStatus
+  return st === 'Siap Diambil' || st === 'Siap Disajikan' || st === 'Selesai'
+})
+
+const isFullyCompleted = computed(() => {
+  return order.value?.orderStatus === 'Selesai'
+})
+
+const step2StatusClass = computed(() => {
+  if (isStep3Active.value) return 'completed'
+  if (isStep2Active.value) return 'in-progress'
+  return 'pending'
+})
+
+const step3StatusClass = computed(() => {
+  if (isFullyCompleted.value) return 'completed'
+  if (isStep3Active.value) return 'completed ready'
+  return 'pending'
+})
+
+const currentPrepLabel = computed(() => {
+  if (isFullyCompleted.value) return 'Pesanan Selesai'
+  if (isStep3Active.value) return 'Siap Diambil di Barista'
+  return 'Sedang Disiapkan di Dapur'
+})
+
+const prepStatusClass = computed(() => {
+  if (isFullyCompleted.value) return 'completed'
+  if (isStep3Active.value) return 'ready'
+  return ''
+})
+
+// Modal & Audio Notifikasi Siap Diambil
+const showReadyModal = ref(false)
+const hasNotifiedReady = ref(false)
+
+function playReadyChime() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext
+    if (!AudioCtx) return
+    const ctx = new AudioCtx()
+    const notes = [523.25, 659.25, 783.99, 1046.5] // C5, E5, G5, C6
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + i * 0.12)
+      gain.gain.setValueAtTime(0.35, ctx.currentTime + i * 0.12)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.12 + 0.6)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(ctx.currentTime + i * 0.12)
+      osc.stop(ctx.currentTime + i * 0.12 + 0.6)
+    })
+  } catch {
+    // browser audio policy
+  }
+}
+
+function checkAndTriggerReadyNotice(status) {
+  if ((status === 'Siap Diambil' || status === 'Siap Disajikan') && !hasNotifiedReady.value) {
+    hasNotifiedReady.value = true
+    showReadyModal.value = true
+    playReadyChime()
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate([200, 100, 200, 100, 400])
+    }
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification('Pesanan Siap Diambil! ☕', {
+          body: `Pesanan #${orderId.value} Anda telah selesai disiapkan. Silakan ambil di meja barista!`,
+          icon: '/favicon.ico'
+        })
+      } catch {}
+    }
+  }
+}
+
+// Watch status order realtime
+watch(() => order.value?.orderStatus, (newStatus) => {
+  if (newStatus) checkAndTriggerReadyNotice(newStatus)
+}, { immediate: true })
+
+// Polling status pesanan & pembayaran
 let statusPollTimer = null
 
-async function refreshPaymentStatus() {
-  if (!orderId.value || isOrderPaid(store.getOrderById(orderId.value))) {
+async function refreshOrderStatus() {
+  if (!orderId.value) {
     stopStatusPolling()
     return
   }
+  const current = store.getOrderById(orderId.value)
+  const isPaid = isOrderPaid(current)
+  const isReadyOrDone = current?.orderStatus === 'Siap Diambil' || current?.orderStatus === 'Siap Disajikan' || current?.orderStatus === 'Selesai'
+
+  if (isPaid && isReadyOrDone) {
+    stopStatusPolling()
+    return
+  }
+
   const res = await api.orders.getById(orderId.value)
   if (res.ok && res.data) {
     store.handleIncomingOrder(res.data)
-    if (isOrderPaid(res.data)) stopStatusPolling()
+    if (res.data.orderStatus) {
+      checkAndTriggerReadyNotice(res.data.orderStatus)
+    }
+    if (isOrderPaid(res.data) && (res.data.orderStatus === 'Siap Diambil' || res.data.orderStatus === 'Siap Disajikan' || res.data.orderStatus === 'Selesai')) {
+      stopStatusPolling()
+    }
   }
 }
 
@@ -44,18 +148,24 @@ function stopStatusPolling() {
 
 onMounted(async () => {
   if (!order.value) {
-    // Ambil satu pesanan milik sendiri (endpoint publik); jangan tarik seluruh daftar.
     const res = await api.orders.getById(orderId.value)
     if (res.ok && res.data) store.handleIncomingOrder(res.data)
   }
-  if (!isOrderPaid(store.getOrderById(orderId.value))) {
-    statusPollTimer = setInterval(refreshPaymentStatus, 3000)
+  if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+    try {
+      Notification.requestPermission()
+    } catch {}
+  }
+  const current = store.getOrderById(orderId.value)
+  if (!isOrderPaid(current) || (current?.orderStatus !== 'Siap Diambil' && current?.orderStatus !== 'Siap Disajikan' && current?.orderStatus !== 'Selesai')) {
+    statusPollTimer = setInterval(refreshOrderStatus, 3000)
   }
 })
 
 onUnmounted(() => {
   stopStatusPolling()
 })
+
 
 function formatDate(isoString) {
   if (!isoString) return new Date().toLocaleString('id-ID')
@@ -141,15 +251,15 @@ function startNewOrder() {
         </div>
       </div>
 
-      <!-- Guidance Alert Box to Cashier -->
-      <div class="cashier-guidance-card">
+      <!-- Guidance Alert Box to Cashier (Hanya tampil jika belum dibayar) -->
+      <div v-if="!orderPaid" class="cashier-guidance-card">
         <div class="guidance-icon-box">
           <AppIcon name="receipt" :size="24" />
         </div>
         <div class="guidance-body">
           <h3 class="guidance-title">Langkah Selanjutnya di Meja Kasir</h3>
           <p class="guidance-text">
-            Silakan menuju <strong>Meja Kasir SIKopi</strong>. 
+            Silakan menuju <strong>Meja Kasir {{ store.brandName || 'SIKopi' }}</strong>. 
             <template v-if="order?.payment?.method === 'qris'">
               Kasir akan menampilkan <strong>QRIS</strong> pada layar admin kasir untuk Anda scan langsung menggunakan m-Banking atau E-Wallet.
             </template>
@@ -163,9 +273,15 @@ function startNewOrder() {
 
       <!-- Status Progress Tracker -->
       <div class="status-tracker-card">
-        <h3 class="tracker-title">Status Penyiapan Hidangan</h3>
+        <div class="tracker-header-row">
+          <h3 class="tracker-title">Status Penyiapan Hidangan</h3>
+          <span class="current-prep-badge" :class="prepStatusClass">
+            {{ currentPrepLabel }}
+          </span>
+        </div>
         
         <div class="tracker-timeline">
+          <!-- Tahap 1: Pesanan Dibuat -->
           <div class="timeline-step completed">
             <div class="step-dot">
               <AppIcon name="check" :size="14" />
@@ -176,27 +292,31 @@ function startNewOrder() {
             </div>
           </div>
 
-          <div class="timeline-bar active"></div>
+          <div class="timeline-bar" :class="{ active: isStep2Active || isStep3Active }"></div>
 
-          <div class="timeline-step in-progress">
+          <!-- Tahap 2: Dapur & Kasir -->
+          <div class="timeline-step" :class="step2StatusClass">
             <div class="step-dot">
-              <AppIcon name="clock" :size="14" />
+              <AppIcon v-if="isStep3Active" name="check" :size="14" />
+              <AppIcon v-else name="clock" :size="14" />
             </div>
             <div class="step-info">
-              <span class="step-label">Dapur & Kasir</span>
-              <span class="step-sub">Menunggu verifikasi kasir</span>
+              <span class="step-label">Dapur & Barista</span>
+              <span class="step-sub">{{ isStep3Active ? 'Selesai diracik' : 'Sedang disiapkan' }}</span>
             </div>
           </div>
 
-          <div class="timeline-bar"></div>
+          <div class="timeline-bar" :class="{ active: isStep3Active }"></div>
 
-          <div class="timeline-step pending">
+          <!-- Tahap 3: Siap Disajikan / Ambil -->
+          <div class="timeline-step" :class="step3StatusClass">
             <div class="step-dot">
-              <span class="dot-inner"></span>
+              <AppIcon v-if="isStep3Active" name="sparkles" :size="14" />
+              <span v-else class="dot-inner"></span>
             </div>
             <div class="step-info">
               <span class="step-label">Siap Disajikan</span>
-              <span class="step-sub">Ambil di meja barista</span>
+              <span class="step-sub">{{ isStep3Active ? 'Ambil di meja barista' : 'Menunggu selesai' }}</span>
             </div>
           </div>
         </div>
@@ -310,6 +430,27 @@ function startNewOrder() {
         </button>
       </div>
     </div>
+
+    <!-- Modal Notifikasi Interaktif: Pesanan Siap Diambil -->
+    <Transition name="fade">
+      <div v-if="showReadyModal" class="ready-modal-backdrop" @click.self="showReadyModal = false">
+        <div class="ready-modal-card">
+          <div class="ready-icon-anim">
+            <AppIcon name="sparkles" :size="38" />
+          </div>
+          <h2 class="ready-title">Pesanan Anda Siap Diambil! ☕</h2>
+          <p class="ready-desc">
+            Halo <strong>{{ order?.customer?.name || 'Pelanggan' }}</strong>, hidangan pesanan Anda (No. <strong>{{ orderId }}</strong>) telah selesai disiapkan oleh barista.
+          </p>
+          <div class="ready-badge-box">
+            <span>Silakan menuju <strong>Meja Barista / Pick-Up Counter</strong> untuk mengambil pesanan Anda.</span>
+          </div>
+          <button type="button" class="btn-ready-ack" @click="showReadyModal = false">
+            <span>Saya Menuju Meja Barista</span>
+          </button>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -521,17 +662,51 @@ function startNewOrder() {
   margin-bottom: 1.5rem;
 }
 
+.tracker-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+}
+
 .tracker-title {
   font-size: 0.95rem;
   font-weight: 700;
   color: var(--color-primary);
-  margin-bottom: 1.25rem;
+  margin-bottom: 0;
+}
+
+.current-prep-badge {
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background-color: var(--bg-subtle);
+  color: var(--color-text-muted);
+}
+
+.current-prep-badge.ready {
+  background-color: #DCFCE7;
+  color: #15803D;
+  animation: pulseBadge 1.8s infinite;
+}
+
+.current-prep-badge.completed {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+@keyframes pulseBadge {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
 }
 
 .tracker-timeline {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  position: relative;
+  width: 100%;
 }
 
 .timeline-step {
@@ -539,8 +714,17 @@ function startNewOrder() {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
+  min-width: 0;
+}
+
+.step-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
 }
 
 .step-dot {
@@ -554,6 +738,7 @@ function startNewOrder() {
   font-weight: 600;
   border: 2px solid var(--border-medium);
   background-color: var(--bg-surface);
+  flex-shrink: 0;
 }
 
 .timeline-step.completed .step-dot {
@@ -568,6 +753,13 @@ function startNewOrder() {
   border-color: var(--color-peach);
 }
 
+.timeline-step.ready .step-dot {
+  background-color: #16A34A;
+  color: #FFFFFF;
+  border-color: #16A34A;
+  box-shadow: 0 0 0 4px rgba(22, 163, 74, 0.2);
+}
+
 .timeline-step.pending .step-dot {
   background-color: var(--bg-subtle);
   border-color: var(--border-medium);
@@ -577,7 +769,10 @@ function startNewOrder() {
   flex: 1;
   height: 2px;
   background-color: var(--border-light);
-  margin: 0 4px 20px;
+  margin-top: 13px;
+  margin-left: 6px;
+  margin-right: 6px;
+  transition: all 0.3s ease;
 }
 
 .timeline-bar.active {
@@ -585,14 +780,97 @@ function startNewOrder() {
 }
 
 .step-label {
-  font-size: 0.82rem;
+  display: block;
+  font-size: 0.84rem;
   font-weight: 600;
   color: var(--color-text-main);
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .step-sub {
+  display: block;
   font-size: 0.74rem;
   color: var(--color-text-subtle);
+  line-height: 1.25;
+  white-space: normal;
+}
+
+/* Modal Pop-up Siap Diambil */
+.ready-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background-color: rgba(23, 33, 24, 0.7);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+}
+
+.ready-modal-card {
+  background-color: #FFFFFF;
+  border-radius: var(--radius-lg);
+  padding: 2.25rem 2rem;
+  max-width: 440px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.25);
+  animation: slideUp 0.3s ease;
+}
+
+.ready-icon-anim {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background-color: #DCFCE7;
+  color: #15803D;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.25rem;
+  animation: pulseBadge 1.5s infinite;
+}
+
+.ready-title {
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: #15803D;
+  margin-bottom: 0.5rem;
+}
+
+.ready-desc {
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-bottom: 1.25rem;
+}
+
+.ready-badge-box {
+  background-color: #F0FDF4;
+  border: 1px dashed #86EFAC;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  color: #166534;
+  font-size: 0.84rem;
+  margin-bottom: 1.5rem;
+}
+
+.btn-ready-ack {
+  width: 100%;
+  height: 46px;
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-ready-ack:hover {
+  background-color: var(--color-primary-hover);
 }
 
 /* Struk Digital Card */
@@ -827,7 +1105,10 @@ function startNewOrder() {
     padding: 1.25rem 0.75rem;
   }
   .step-label {
-    font-size: 0.68rem;
+    font-size: 0.74rem;
+  }
+  .step-sub {
+    font-size: 0.66rem;
   }
 }
 </style>
