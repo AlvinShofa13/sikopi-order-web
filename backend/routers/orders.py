@@ -2,7 +2,7 @@ import csv
 import io
 import random
 from datetime import datetime, timezone
-from typing import List, Dict, Any
+from typing import Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
@@ -10,33 +10,10 @@ from sqlalchemy.orm import Session
 from auth_dep import require_admin, is_valid_admin_token
 from database import get_db
 from models import Order, OrderItem, TokenRecord
+from realtime import order_manager
 from schemas import OrderCreate, OrderStatusUpdate
 
 router = APIRouter(prefix="/orders", tags=["Orders Management"])
-
-
-# Realtime WebSocket Manager for Cashier / Admin Dashboards
-class OrderConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, event: str, order_data: dict):
-        for connection in list(self.active_connections):
-            try:
-                await connection.send_json({"event": event, "order": order_data})
-            except Exception:
-                self.disconnect(connection)
-
-
-order_manager = OrderConnectionManager()
 
 
 @router.websocket("/ws")
@@ -329,11 +306,16 @@ async def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
         )
         db.add(order_item)
 
-    # 5. Burn Customer Token (One-time use strictly enforced)
+    # 5. Burn Customer Token (One-time use strictly enforced: reject reuse)
     cust_token = payload.customer.token
     if cust_token:
         clean_token = str(cust_token).strip()
         existing_token = db.query(TokenRecord).filter(TokenRecord.token == clean_token).first()
+        if existing_token and existing_token.is_used:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f'Token "{clean_token}" sudah dipakai. Minta token baru ke kasir.'
+            )
         if existing_token:
             existing_token.is_used = True
             existing_token.order_id = order_id

@@ -128,6 +128,13 @@ function connectWebSocket() {
           if (selectedOrder.value && selectedOrder.value.orderId === data.order.orderId) {
             selectedOrder.value = data.order
           }
+        } else if (data.event === 'TOKEN_ROTATED' && data.activeToken) {
+          store.activeToken = data.activeToken
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('sikopi_active_token', data.activeToken)
+            if (data.time) localStorage.setItem('sikopi_token_time', data.time)
+          }
+          showToast(`Token kasir baru: ${data.activeToken} (ada verifikasi pelanggan)`, 'success')
         }
       } catch {
         // ignore non-json messages
@@ -242,7 +249,10 @@ async function handleExport(format) {
   const filename = `penjualan-sikopi-${stamp}.${format}`
   isExporting.value = true
   try {
-    const res = await fetch(api.orders.exportUrl(format))
+    const adminToken = (typeof localStorage !== 'undefined' ? localStorage.getItem('sikopi_admin_token') : '') || ''
+    const res = await fetch(api.orders.exportUrl(format), {
+      headers: adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+    })
     if (!res.ok) throw new Error(`Server ${res.status}`)
     downloadFromUrl(URL.createObjectURL(await res.blob()), filename)
     showToast(`File ${filename} berhasil diunduh.`)
@@ -848,10 +858,6 @@ async function handleResetBranding() {
           </nav>
 
           <div class="nav-user-actions">
-            <button type="button" class="btn-nav-customer" @click="goToCustomerMenu" title="Buka Halaman Menu Pelanggan">
-              <AppIcon name="bag" :size="15" />
-              <span>Lihat Menu Pelanggan</span>
-            </button>
             <button type="button" class="btn-nav-logout" @click="handleLogout" title="Keluar dari Panel Admin">
               <AppIcon name="close" :size="14" />
               <span>Keluar</span>

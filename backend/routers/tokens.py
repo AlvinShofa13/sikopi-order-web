@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from auth_dep import require_admin
 from database import get_db
+from realtime import order_manager
 from models import AppSetting, TokenRecord
 from schemas import TokenVerifyRequest, TokenVerifyResponse
 
@@ -42,7 +43,7 @@ def get_active_token(db: Session = Depends(get_db)):
 
 
 @router.post("/generate")
-def generate_new_active_token(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
+async def generate_new_active_token(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
     """Generate and rotate to a new active 3-digit token (Admin)."""
     new_token = generate_unique_3digit_token(db)
     setting = db.query(AppSetting).filter(AppSetting.key == "active_token").first()
@@ -52,15 +53,14 @@ def generate_new_active_token(db: Session = Depends(get_db), _admin: bool = Depe
         setting = AppSetting(key="active_token", value=new_token)
         db.add(setting)
     db.commit()
-    
-    return {
-        "activeToken": new_token,
-        "time": datetime.now(timezone.utc).isoformat()
-    }
+
+    rotated = {"activeToken": new_token, "time": datetime.now(timezone.utc).isoformat()}
+    await order_manager.broadcast("TOKEN_ROTATED", rotated)
+    return rotated
 
 
 @router.post("/verify", response_model=TokenVerifyResponse)
-def verify_customer_token(payload: TokenVerifyRequest, db: Session = Depends(get_db)):
+async def verify_customer_token(payload: TokenVerifyRequest, db: Session = Depends(get_db)):
     """Verify customer Name & 3-digit Token."""
     clean_name = payload.name.strip()
     clean_token = payload.token.strip()
@@ -114,6 +114,10 @@ def verify_customer_token(payload: TokenVerifyRequest, db: Session = Depends(get
     else:
         db.add(AppSetting(key="active_token", value=new_token))
     db.commit()
+    await order_manager.broadcast("TOKEN_ROTATED", {
+        "activeToken": new_token,
+        "time": datetime.now(timezone.utc).isoformat(),
+    })
 
     return TokenVerifyResponse(
         success=True,

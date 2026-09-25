@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useOrderStore } from '@/stores/orderStore'
-import { api } from '@/services/api'
 
 vi.mock('@/services/api', () => ({
   api: {
@@ -98,7 +97,7 @@ describe('Order Store & Flow', () => {
       label: 'QRIS'
     }
 
-    const orderId = store.placeOrder(customerData, paymentDetails)
+    const orderId = await store.placeOrder(customerData, paymentDetails)
     expect(orderId).toMatch(/^HYT-2026-\d{5}$/)
     expect(store.cart.length).toBe(0)
     expect(store.currentOrder).not.toBeNull()
@@ -147,7 +146,7 @@ describe('Order Store & Flow', () => {
 
     // placeOrder uses verified customer session name
     store.addToCart(store.menuItems[0])
-    const orderId = store.placeOrder({}, { method: 'cash', label: 'Kasir' })
+    const orderId = await store.placeOrder({}, { method: 'cash', label: 'Kasir' })
     const createdOrder = store.getOrderById(orderId)
     expect(createdOrder.customer.name).toBe('Rian Anggoro')
   })
@@ -163,7 +162,7 @@ describe('Order Store & Flow', () => {
 
     // Customer adds items and places order
     store.addToCart(store.menuItems[0])
-    const orderId = store.placeOrder({}, { method: 'cash', label: 'Kasir' })
+    const orderId = await store.placeOrder({}, { method: 'cash', label: 'Kasir' })
     const createdOrder = store.getOrderById(orderId)
     expect(createdOrder.customer.name).toBe('Dewi Sartika')
 

@@ -558,8 +558,9 @@ export const useOrderStore = defineStore('order', () => {
     }
   }
 
-  // Create an order
-  function placeOrder(customerData, paymentDetails) {
+  // Create an order (server authoritative: gagal simpan = gagal total,
+  // cart & sesi utuh agar pelanggan bisa coba lagi)
+  async function placeOrder(customerData, paymentDetails) {
     const randomSeq = Math.floor(10000 + Math.random() * 90000)
     const orderNumber = `HYT-2026-${randomSeq}`
     const orderDate = new Date().toISOString()
@@ -595,24 +596,23 @@ export const useOrderStore = defineStore('order', () => {
       orderStatus: 'Diterima & Disiapkan'
     }
 
-    currentOrder.value = orderPayload
-    orderHistory.value.unshift(orderPayload)
-
-    // Order is held in memory and directly persisted to FastAPI backend database
-
-    // Burn token used
-    if (tokenUsed) {
-      markTokenAsUsed(tokenUsed, orderNumber, resolvedCustomerName)
-    }
-
-    // Post to FastAPI backend in background (skip during unit tests)
+    // Simpan ke backend dulu; 409 = token sudah dipakai (double-burn ditolak)
     if (import.meta.env.MODE !== 'test') {
-      api.orders.create({
+      const res = await api.orders.create({
         customer: orderPayload.customer,
         payment: orderPayload.payment,
         items: orderPayload.items,
         breakdown: orderPayload.breakdown
-      }).catch(() => {})
+      })
+      if (!res.ok) throw new Error(res.error || 'Gagal menyimpan pesanan ke server.')
+    }
+
+    currentOrder.value = orderPayload
+    orderHistory.value.unshift(orderPayload)
+
+    // Burn token used
+    if (tokenUsed) {
+      markTokenAsUsed(tokenUsed, orderNumber, resolvedCustomerName)
     }
 
     broadcastChange('ORDER_CREATED', { orderId: orderNumber })

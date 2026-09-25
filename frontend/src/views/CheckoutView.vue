@@ -38,6 +38,7 @@ async function handleProcessOrder() {
   }
 
   isSubmitting.value = true
+  errors.value = {}
 
   let paymentLabel = 'QRIS'
   let reference = `QRIS-${Math.floor(100000 + Math.random() * 900000)}`
@@ -47,19 +48,25 @@ async function handleProcessOrder() {
     reference = `CSH-${Math.floor(100000 + Math.random() * 900000)}`
   }
 
-  const orderNumber = await store.placeOrder({
-    ...customer.value,
-    name: store.customerSession.name || customer.value.name || 'Pelanggan'
-  }, {
-    method: selectedMethod.value,
-    label: paymentLabel,
-    reference
-  })
+  try {
+    const orderNumber = await store.placeOrder({
+      ...customer.value,
+      name: store.customerSession.name || customer.value.name || 'Pelanggan'
+    }, {
+      method: selectedMethod.value,
+      label: paymentLabel,
+      reference
+    })
 
-  isSubmitting.value = false
+    isSubmitting.value = false
 
-  // Navigate to confirmation page to receive order number
-  router.push(`/konfirmasi/${orderNumber}`)
+    // Navigate to confirmation page to receive order number
+    router.push(`/konfirmasi/${orderNumber}`)
+  } catch (err) {
+    isSubmitting.value = false
+    errors.value = { submit: err.message || 'Gagal membuat pesanan. Coba lagi.' }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 }
 
 function backToCart() {
@@ -263,6 +270,7 @@ function backToCart() {
             </div>
 
             <!-- Submit Button -->
+            <p v-if="errors.submit" class="error-msg" role="alert">{{ errors.submit }}</p>
             <button 
               type="button" 
               class="btn-submit-order"
