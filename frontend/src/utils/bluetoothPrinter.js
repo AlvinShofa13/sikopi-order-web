@@ -441,6 +441,10 @@ export function buildCustomerEscPosBuffer(order, width = 32, brandName = '') {
   pushBytes(ESC_POS.BOLD_ON)
   pushText(formatTwoColumns('TOTAL PEMBAYARAN', formatRupiahSimple(breakdown.total || 0), width))
   pushText(formatTwoColumns('STATUS PEMBAYARAN', 'LUNAS', width))
+  if (order.payment?.cashReceived) {
+    pushText(formatTwoColumns('Tunai Diterima:', formatRupiahSimple(order.payment.cashReceived), width))
+    pushText(formatTwoColumns('Kembalian:', formatRupiahSimple(order.payment.cashChange || 0), width))
+  }
   pushBytes(ESC_POS.BOLD_OFF)
 
   pushText(dividerSingle)

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from auth_dep import require_admin
 from database import get_db
 from realtime import order_manager
-from models import AppSetting, TokenRecord
+from models import AppSetting, TokenRecord, Order
 from schemas import TokenVerifyRequest, TokenVerifyResponse
 
 router = APIRouter(prefix="/tokens", tags=["Token Management"])
@@ -77,7 +77,20 @@ async def verify_customer_token(payload: TokenVerifyRequest, db: Session = Depen
             message="Silakan masukkan token 3 digit."
         )
 
-    # 1. Check if token was already used / burned
+    # 1. Check if token is associated with any completed/existing order
+    existing_order = db.query(Order).filter(Order.customer_token == clean_token).order_by(Order.created_at.desc()).first()
+    if existing_order:
+        return TokenVerifyResponse(
+            success=False,
+            isCompletedOrder=True,
+            orderId=existing_order.order_id,
+            message=(
+                f'Token "{clean_token}" sudah menyelesaikan pesanan #{existing_order.order_id}. '
+                f'Mengalihkan ke rincian pesanan Anda...'
+            )
+        )
+
+    # 2. Check if token was already used / burned in TokenRecord
     burned = db.query(TokenRecord).filter(
         TokenRecord.token == clean_token,
         TokenRecord.is_used == True
@@ -87,7 +100,7 @@ async def verify_customer_token(payload: TokenVerifyRequest, db: Session = Depen
         linked_order = burned.order_id
         return TokenVerifyResponse(
             success=False,
-            isCompletedOrder=True,
+            isCompletedOrder=bool(linked_order),
             orderId=linked_order,
             message=(
                 f'Token "{clean_token}" sudah menyelesaikan pesanan #{linked_order}. '

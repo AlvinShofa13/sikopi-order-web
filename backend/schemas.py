@@ -93,6 +93,8 @@ class OrderStatusUpdate(BaseModel):
     order_status: Optional[str] = None
     payment_status: Optional[str] = None
     is_paid: Optional[bool] = None
+    cash_received: Optional[float] = None
+    cash_change: Optional[float] = None
 
 
 # --- Token Schemas ---

@@ -491,13 +491,24 @@ export const useOrderStore = defineStore('order', () => {
       return { success: false, message: 'Silakan masukkan token 3 digit.' }
     }
 
-    // 1. Check local burned tokens
+    // 1. Check local orderHistory
+    const existingOrder = orderHistory.value.find(o => o.customer?.token === cleanToken)
+    if (existingOrder) {
+      return {
+        success: false,
+        isCompletedOrder: true,
+        orderId: existingOrder.orderId,
+        message: `Token "${cleanToken}" sudah menyelesaikan pesanan #${existingOrder.orderId}. Mengalihkan ke rincian pesanan Anda...`
+      }
+    }
+
+    // 2. Check local burned tokens
     const burnedInfo = usedTokensMap.value[cleanToken]
     if (burnedInfo) {
       const linkedOrderId = burnedInfo?.orderId || null
       return {
         success: false,
-        isCompletedOrder: true,
+        isCompletedOrder: Boolean(linkedOrderId),
         orderId: linkedOrderId,
         message: linkedOrderId
           ? `Token "${cleanToken}" sudah menyelesaikan pesanan #${linkedOrderId}. Mengalihkan ke rincian pesanan Anda...`
@@ -543,6 +554,66 @@ export const useOrderStore = defineStore('order', () => {
     }).catch(() => {})
 
     return { success: true }
+  }
+
+  // Verifikasi online dengan server backend: memeriksa pesanan selesai & token aktif
+  async function verifyCustomerTokenOnline(name, token) {
+    const cleanName = (name || '').trim()
+    const cleanToken = (token || '').trim()
+
+    // Cek synchronous lokal dulu
+    const localRes = verifyAndSetCustomer(cleanName, cleanToken)
+    if (localRes.success || localRes.isCompletedOrder) {
+      return localRes
+    }
+
+    // Jika tidak cocok secara lokal, periksa langsung ke server backend database
+    try {
+      const res = await api.tokens.verify(cleanName, cleanToken)
+      if (res.ok && res.data) {
+        if (res.data.isCompletedOrder && res.data.orderId) {
+          return {
+            success: false,
+            isCompletedOrder: true,
+            orderId: res.data.orderId,
+            message: res.data.message || `Token "${cleanToken}" sudah menyelesaikan pesanan #${res.data.orderId}. Mengalihkan ke rincian pesanan Anda...`
+          }
+        }
+        if (res.data.success) {
+          customerSession.value = {
+            name: cleanName,
+            token: cleanToken,
+            isVerified: true
+          }
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem('sikopi_cust_name', cleanName)
+            localStorage.setItem('sikopi_cust_token', cleanToken)
+            localStorage.setItem('sikopi_cust_verified', 'true')
+          }
+          if (res.data.newToken) {
+            activeToken.value = String(res.data.newToken)
+            tokenGeneratedAt.value = new Date().toISOString()
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('sikopi_active_token', activeToken.value)
+              localStorage.setItem('sikopi_token_time', tokenGeneratedAt.value)
+            }
+            broadcastChange('TOKEN_ROTATED', { token: activeToken.value, time: tokenGeneratedAt.value })
+          }
+          return { success: true }
+        } else {
+          return {
+            success: false,
+            isCompletedOrder: res.data.isCompletedOrder || false,
+            orderId: res.data.orderId || null,
+            message: res.data.message || localRes.message
+          }
+        }
+      }
+    } catch {
+      // offline fallback
+    }
+
+    return localRes
   }
 
   function clearCustomerSession() {
@@ -694,6 +765,7 @@ export const useOrderStore = defineStore('order', () => {
     generateNewToken,
     fetchActiveToken,
     verifyAndSetCustomer,
+    verifyCustomerTokenOnline,
     clearCustomerSession,
     refreshOrdersFromDB,
     fetchMenuFromAPI,

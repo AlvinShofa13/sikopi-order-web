@@ -56,6 +56,8 @@ def serialize_order(ord: Order) -> Dict[str, Any]:
             "reference": ord.payment_reference,
             "status": ord.payment_status,
             "paid": bool(ord.is_paid),
+            "cashReceived": float(getattr(ord, "cash_received", 0.0) or 0.0),
+            "cashChange": float(getattr(ord, "cash_change", 0.0) or 0.0),
         },
         "items": [
             {
@@ -346,6 +348,10 @@ async def update_order_status(order_id: str, payload: OrderStatusUpdate, db: Ses
 
     if payload.order_status:
         ord.order_status = payload.order_status
+    if payload.cash_received is not None:
+        ord.cash_received = payload.cash_received
+    if payload.cash_change is not None:
+        ord.cash_change = payload.cash_change
     if payload.is_paid is not None:
         ord.is_paid = payload.is_paid
         ord.payment_status = "Lunas" if payload.is_paid else "Menunggu Pembayaran"

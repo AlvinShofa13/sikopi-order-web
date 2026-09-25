@@ -43,6 +43,8 @@ class Order(Base):
     payment_reference = Column(String(100), nullable=True)
     payment_status = Column(String(50), default="Menunggu Pembayaran")
     is_paid = Column(Boolean, default=False, nullable=False)
+    cash_received = Column(Float, default=0.0)
+    cash_change = Column(Float, default=0.0)
 
     # Financial Breakdown
     subtotal = Column(Float, default=0.0)

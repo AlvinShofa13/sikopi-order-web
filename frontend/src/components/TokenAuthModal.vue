@@ -38,7 +38,7 @@ async function handleSubmit() {
     return
   }
 
-  const result = await store.verifyAndSetCustomer(inputName.value, inputToken.value)
+  const result = await store.verifyCustomerTokenOnline(inputName.value, inputToken.value)
 
   if (!result.success) {
     if (result.isCompletedOrder && result.orderId) {

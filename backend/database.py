@@ -35,6 +35,10 @@ def ensure_schema():
                 "UPDATE orders SET is_paid = 1 "
                 "WHERE payment_status IN ('Sudah Lunas', 'Lunas', 'Sudah Dibayar')"
             ))
+        if "cash_received" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN cash_received FLOAT DEFAULT 0.0"))
+        if "cash_change" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN cash_change FLOAT DEFAULT 0.0"))
         for dead in ("qris_payload", "qris_image_url"):
             if dead in cols:
                 conn.execute(text(f"ALTER TABLE orders DROP COLUMN {dead}"))

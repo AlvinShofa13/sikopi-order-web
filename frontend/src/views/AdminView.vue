@@ -329,9 +329,95 @@ function handleCopyToken() {
   }, 2000)
 }
 
+// State & Kalkulator Pembayaran Tunai (Cash di Kasir)
+const cashAmountReceived = ref(0)
+const isValidatingCash = ref(false)
+
 function openOrderDetail(order) {
   selectedOrder.value = order
   savedPrinterName.value = getSavedPrinterName()
+  const total = Number(order.breakdown?.total || 0)
+  const existingReceived = order.payment?.cashReceived ?? order.payment?.cash_received
+  if (order.payment?.paid && existingReceived !== undefined && existingReceived > 0) {
+    cashAmountReceived.value = Number(existingReceived)
+  } else {
+    cashAmountReceived.value = total
+  }
+}
+
+const cashChange = computed(() => {
+  if (!selectedOrder.value) return 0
+  const total = Number(selectedOrder.value.breakdown?.total || 0)
+  const received = Number(cashAmountReceived.value || 0)
+  return Math.max(0, received - total)
+})
+
+const isCashSufficient = computed(() => {
+  if (!selectedOrder.value) return false
+  const total = Number(selectedOrder.value.breakdown?.total || 0)
+  const received = Number(cashAmountReceived.value || 0)
+  return received >= total
+})
+
+function setCashReceived(amount) {
+  cashAmountReceived.value = Number(amount) || 0
+}
+
+function getCashPresets(total = 0) {
+  const t = Number(total) || 0
+  const standard = [5000, 10000, 20000, 50000, 100000]
+  const filtered = standard.filter(amt => amt > t)
+  if (filtered.length === 0) {
+    return [Math.ceil((t + 1000) / 10000) * 10000, Math.ceil((t + 1000) / 50000) * 50000].filter(v => v > t)
+  }
+  return filtered.slice(0, 4)
+}
+
+async function validateCashPayment(order) {
+  if (!order || order.payment?.paid || isValidatingCash.value) return
+  const total = Number(order.breakdown?.total || 0)
+  const received = Number(cashAmountReceived.value || 0)
+
+  if (received < total) {
+    showToast(`Uang tunai yang diterima kurang ${formatRupiah(total - received)}!`, 'error')
+    return
+  }
+
+  const change = received - total
+  isValidatingCash.value = true
+
+  try {
+    const res = await api.orders.updateStatus(order.orderId, {
+      is_paid: true,
+      payment_status: 'Lunas',
+      cash_received: received,
+      cash_change: change
+    })
+    if (!res.ok) throw new Error(res.error || 'Gagal memvalidasi pembayaran tunai.')
+
+    order.payment.paid = true
+    order.payment.status = 'Lunas'
+    order.payment.cashReceived = received
+    order.payment.cashChange = change
+
+    // Broadcast realtime update agar customer view & admin tab lain langsung lunas
+    store.broadcastOrderStatusUpdate(order.orderId, {
+      is_paid: true,
+      payment: {
+        ...order.payment,
+        paid: true,
+        status: 'Lunas',
+        cashReceived: received,
+        cashChange: change
+      }
+    })
+
+    showToast(`Pembayaran tunai Rp ${formatRupiah(received)} berhasil divalidasi! Kembalian: ${formatRupiah(change)}`, 'success')
+  } catch (err) {
+    showToast(err.message || 'Gagal memvalidasi pembayaran tunai.', 'error')
+  } finally {
+    isValidatingCash.value = false
+  }
 }
 
 function closeOrderDetail() {
@@ -443,11 +529,15 @@ async function handleDeleteMenu(item) {
 async function markOrderAsPaid(order) {
   if (!order || order.payment?.paid) return
   try {
-    const res = await api.orders.updateStatus(order.orderId, { is_paid: true })
+    const res = await api.orders.updateStatus(order.orderId, { is_paid: true, payment_status: 'Lunas' })
     if (!res.ok) throw new Error(res.error || 'Gagal menyimpan status.')
     order.payment.paid = true
     order.payment.status = 'Lunas'
-    showToast(`Pesanan #${order.orderId} lunas. Struk bisa dicetak.`)
+    store.broadcastOrderStatusUpdate(order.orderId, {
+      is_paid: true,
+      payment: { ...order.payment, paid: true, status: 'Lunas' }
+    })
+    showToast(`Pesanan #${order.orderId} lunas. Struk bisa dicetak.`, 'success')
   } catch (err) {
     showToast(err.message || 'Gagal menandai lunas.', 'error')
   }
@@ -767,7 +857,7 @@ async function handleResetBranding() {
                 id="login-password"
                 v-model="inputPassword" 
                 type="password" 
-                placeholder="••••••••"
+                placeholder="password"
                 class="admin-input"
                 required
               />
@@ -1619,6 +1709,126 @@ async function handleResetBranding() {
                   <AppIcon name="check" :size="18" />
                   <span>{{ selectedOrder.payment?.paid ? 'Pembayaran Telah Lunas' : 'Konfirmasi Sudah Dibayar' }}</span>
                 </button>
+              </div>
+            </div>
+
+            <!-- Validasi Pembayaran Tunai di Kasir (Tampilkan jika metode cash / tunai) -->
+            <div v-else class="cash-cashier-card">
+              <div class="cash-cashier-header">
+                <div class="cash-title-group">
+                  <AppIcon name="cash" :size="22" class="cash-icon" />
+                  <div>
+                    <h4 class="cash-title">Pembayaran Tunai di Kasir</h4>
+                    <p class="cash-subtitle">Validasi uang yang diterima dari pelanggan & hitung kembalian</p>
+                  </div>
+                </div>
+                <span class="cash-status-pill" :class="selectedOrder.payment?.paid ? 'status-paid' : 'status-unpaid'">
+                  <AppIcon :name="selectedOrder.payment?.paid ? 'check' : 'clock'" :size="13" />
+                  <span>{{ selectedOrder.payment?.paid ? 'Sudah Lunas' : 'Menunggu Validasi Kasir' }}</span>
+                </span>
+              </div>
+
+              <div class="cash-calc-body">
+                <!-- Tagihan -->
+                <div class="cash-summary-row">
+                  <div class="cash-field-label">
+                    <span class="main-label">Total Tagihan Pesanan:</span>
+                    <span class="sub-label">Nominal yang harus dibayarkan pelanggan</span>
+                  </div>
+                  <div class="cash-tagihan-value font-mono">
+                    {{ formatRupiah(selectedOrder.breakdown?.total) }}
+                  </div>
+                </div>
+
+                <!-- Input Nominal Tunai Diterima (Jika belum bayar) -->
+                <div v-if="!selectedOrder.payment?.paid" class="cash-input-section">
+                  <label class="cash-input-label" for="cash-received-input">
+                    <span>Uang Diterima dari Pelanggan:</span>
+                    <span class="required">*</span>
+                  </label>
+                  
+                  <div class="cash-input-wrapper">
+                    <span class="cash-currency-prefix">Rp</span>
+                    <input 
+                      id="cash-received-input"
+                      v-model.number="cashAmountReceived" 
+                      type="number" 
+                      min="0"
+                      step="500"
+                      placeholder="Masukkan nominal uang"
+                      class="cash-input-field font-mono"
+                    />
+                  </div>
+
+                  <!-- Preset Chips Uang Cepat -->
+                  <div class="cash-preset-chips">
+                    <span class="preset-label">Nominal Cepat:</span>
+                    <button 
+                      type="button" 
+                      class="btn-preset-chip chip-pas"
+                      :class="{ active: cashAmountReceived === (selectedOrder.breakdown?.total || 0) }"
+                      @click="setCashReceived(selectedOrder.breakdown?.total)"
+                    >
+                      Uang Pas ({{ formatRupiah(selectedOrder.breakdown?.total) }})
+                    </button>
+                    <button 
+                      v-for="amt in getCashPresets(selectedOrder.breakdown?.total)" 
+                      :key="amt"
+                      type="button" 
+                      class="btn-preset-chip"
+                      :class="{ active: cashAmountReceived === amt }"
+                      @click="setCashReceived(amt)"
+                    >
+                      {{ formatRupiah(amt) }}
+                    </button>
+                  </div>
+
+                  <!-- Kalkulasi Kembalian -->
+                  <div class="cash-change-display" :class="{ 'is-sufficient': isCashSufficient, 'is-insufficient': !isCashSufficient && cashAmountReceived > 0 }">
+                    <div class="change-info-col">
+                      <span class="change-label">Kembalian Pelanggan:</span>
+                      <span v-if="isCashSufficient" class="change-desc">Uang cukup. Serahkan kembalian sesuai nominal di samping.</span>
+                      <span v-else-if="cashAmountReceived > 0" class="change-desc text-danger font-bold">
+                        Uang tunai kurang {{ formatRupiah((selectedOrder.breakdown?.total || 0) - cashAmountReceived) }}
+                      </span>
+                      <span v-else class="change-desc">Masukkan nominal uang tunai yang diberikan pelanggan</span>
+                    </div>
+                    <div class="change-value font-mono" :class="{ 'text-sage': isCashSufficient, 'text-danger': !isCashSufficient && cashAmountReceived > 0 }">
+                      {{ isCashSufficient ? formatRupiah(cashChange) : (cashAmountReceived > 0 ? `-${formatRupiah((selectedOrder.breakdown?.total || 0) - cashAmountReceived)}` : 'Rp 0') }}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Tampilan Rincian Setelah Lunas -->
+                <div v-else class="cash-paid-summary">
+                  <div class="paid-info-row">
+                    <span class="paid-lbl">Uang Diterima:</span>
+                    <span class="paid-val font-mono">{{ formatRupiah(selectedOrder.payment?.cashReceived || selectedOrder.breakdown?.total) }}</span>
+                  </div>
+                  <div class="paid-info-row">
+                    <span class="paid-lbl">Kembalian Diberikan:</span>
+                    <span class="paid-val font-mono text-sage font-bold">{{ formatRupiah(selectedOrder.payment?.cashChange || 0) }}</span>
+                  </div>
+                </div>
+
+                <!-- Tombol Validasi Kasir -->
+                <div class="cash-pay-action-row">
+                  <button 
+                    type="button" 
+                    class="btn-validate-cash"
+                    :class="{ 'btn-paid-done': selectedOrder.payment?.paid }"
+                    :disabled="selectedOrder.payment?.paid || !isCashSufficient || isValidatingCash"
+                    @click="validateCashPayment(selectedOrder)"
+                  >
+                    <AppIcon :name="selectedOrder.payment?.paid ? 'check' : 'check-circle'" :size="18" />
+                    <span>
+                      {{ selectedOrder.payment?.paid 
+                          ? 'Pembayaran Tunai Telah Lunas & Tervalidasi' 
+                          : (isValidatingCash ? 'Menyimpan Pembayaran...' : 'Validasi Pembayaran Tunai & Lunas') 
+                      }}
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -3320,6 +3530,302 @@ async function handleResetBranding() {
 
 .btn-mark-paid:disabled {
   background-color: #A3BFB0;
+  cursor: default;
+}
+
+/* Cash Cashier Validation Card */
+.cash-cashier-card {
+  background-color: var(--color-primary-soft);
+  border: 1px solid rgba(61, 90, 76, 0.2);
+  border-radius: var(--radius-md);
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.cash-cashier-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(61, 90, 76, 0.15);
+  margin-bottom: 1rem;
+}
+
+.cash-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cash-icon {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.cash-title {
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.cash-subtitle {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.cash-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.cash-status-pill.status-paid {
+  background-color: #E6F4EA;
+  color: #137333;
+  border: 1px solid #CEEAD6;
+}
+
+.cash-status-pill.status-unpaid {
+  background-color: #FEF7E0;
+  color: #B06000;
+  border: 1px solid #FEEFC3;
+}
+
+.cash-calc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cash-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  background-color: var(--bg-surface);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(61, 90, 76, 0.15);
+}
+
+.cash-field-label .main-label {
+  display: block;
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: var(--color-charcoal);
+}
+
+.cash-field-label .sub-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--color-text-subtle);
+}
+
+.cash-tagihan-value {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--color-primary);
+}
+
+.cash-input-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cash-input-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-charcoal);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cash-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.cash-currency-prefix {
+  position: absolute;
+  left: 12px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  pointer-events: none;
+}
+
+.cash-input-field {
+  width: 100%;
+  padding: 10px 12px 10px 42px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-charcoal);
+  background-color: #FFFFFF;
+  border: 2px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.cash-input-field:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(44, 74, 62, 0.12);
+}
+
+.cash-preset-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.preset-label {
+  font-size: 0.73rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  margin-right: 2px;
+}
+
+.btn-preset-chip {
+  padding: 4px 10px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-full);
+  color: var(--color-charcoal);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-preset-chip:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-preset-chip.chip-pas {
+  background-color: rgba(44, 74, 62, 0.08);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.btn-preset-chip.active {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.cash-change-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  margin-top: 4px;
+}
+
+.cash-change-display.is-sufficient {
+  background-color: #F6FAF7;
+  border-color: rgba(30, 142, 62, 0.35);
+}
+
+.cash-change-display.is-insufficient {
+  background-color: #FDF7F7;
+  border-color: rgba(217, 48, 37, 0.3);
+}
+
+.change-info-col .change-label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--color-charcoal);
+}
+
+.change-info-col .change-desc {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--color-text-subtle);
+  margin-top: 2px;
+}
+
+.change-value {
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.cash-paid-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0.85rem 1rem;
+  background-color: #F6FAF7;
+  border: 1px solid rgba(30, 142, 62, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.paid-info-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.paid-info-row .paid-lbl {
+  color: var(--color-charcoal);
+  font-weight: 600;
+}
+
+.paid-info-row .paid-val {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.cash-pay-action-row {
+  margin-top: 4px;
+}
+
+.btn-validate-cash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-validate-cash:hover:not(:disabled) {
+  background-color: var(--color-primary-dark, #1F362D);
+  box-shadow: 0 4px 12px rgba(44, 74, 62, 0.25);
+}
+
+.btn-validate-cash:disabled {
+  background-color: #A3BFB0;
+  cursor: not-allowed;
+}
+
+.btn-validate-cash.btn-paid-done {
+  background-color: #2E7D32;
+  color: #FFFFFF;
   cursor: default;
 }
 

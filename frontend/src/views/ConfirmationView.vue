@@ -411,6 +411,14 @@ function startNewOrder() {
             <span class="total-title">Total Pembayaran</span>
             <span class="total-value font-mono">{{ formatRupiah(order?.breakdown?.total || 1) }}</span>
           </div>
+          <div v-if="order?.payment?.cashReceived" class="fin-row">
+            <span>Uang Tunai Diterima</span>
+            <span class="font-mono">{{ formatRupiah(order.payment.cashReceived) }}</span>
+          </div>
+          <div v-if="order?.payment?.cashReceived" class="fin-row">
+            <span>Kembalian</span>
+            <span class="font-mono text-sage font-bold">{{ formatRupiah(order.payment.cashChange || 0) }}</span>
+          </div>
         </div>
 
         <div class="receipt-footer-notes">
