@@ -10,6 +10,10 @@
 backend/.env
 frontend/.env.local
 
+# Dokumen spesifikasi internal (memuat detail operasional & keamanan internal).
+# JANGAN publish ke repo publik — bagikan ke dosen/tim via dokumen privat.
+PRD.md
+
 # Database files (local SQLite persistence)
 *.db
 *.sqlite3
@@ -82,3 +86,4 @@ cypress/videos/
 cypress/screenshots/
 coverage/
 *.log
+PRD.md
