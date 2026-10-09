@@ -94,11 +94,11 @@ export function generateKitchenReceiptText(order, width = 32, brandName = '') {
   lines.push('[ STRUK DAPUR ]'.padStart((width + 15) / 2))
   lines.push(dividerDouble)
 
-  // 2. Metadata Pesanan (No. Pesanan, Pelanggan, Token, dan Waktu)
+  // 2. Metadata Pesanan (No. Pesanan, Pelanggan, WhatsApp, dan Waktu)
   lines.push(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
   lines.push(formatTwoColumns('Pelanggan:', order.customer?.name || 'Pelanggan', width))
-  if (order.customer?.token) {
-    lines.push(formatTwoColumns('Token Antrean:', '#' + order.customer.token, width))
+  if (order.customer?.phone) {
+    lines.push(formatTwoColumns('WhatsApp:', order.customer.phone, width))
   }
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('id-ID') : new Date().toLocaleString('id-ID')
   lines.push(formatTwoColumns('Waktu:', orderDate, width))
@@ -134,7 +134,7 @@ export function generateKitchenReceiptText(order, width = 32, brandName = '') {
 
 /**
  * Menghasilkan representasi plain text struk pelanggan
- * Memuat Nama Pemesan, Token Pelanggan, rincian hidangan, dan Status Bayar Lunas
+ * Memuat Nama Pemesan, nomor WhatsApp, rincian hidangan, dan Status Bayar Lunas
  */
 export function generateCustomerReceiptText(order, width = 32, brandName = '') {
   if (!order) return ''
@@ -150,11 +150,14 @@ export function generateCustomerReceiptText(order, width = 32, brandName = '') {
   lines.push('[ STRUK PELANGGAN ]'.padStart((width + 19) / 2))
   lines.push(dividerSingle)
 
-  // 2. Metadata Pesanan (No. Pesanan, Nama, Token, Waktu, Pembayaran)
+  // 2. Metadata Pesanan (No. Pesanan, Nama, WhatsApp, Waktu, Pembayaran)
   lines.push(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
   lines.push(formatTwoColumns('Nama Pemesan:', order.customer?.name || 'Pelanggan', width))
-  if (order.customer?.token) {
-    lines.push(formatTwoColumns('Token Pelanggan:', '#' + order.customer.token, width))
+  if (order.customer?.phone) {
+    lines.push(formatTwoColumns('WhatsApp:', order.customer.phone, width))
+  }
+  if (order.channel === 'preorder' && order.batch?.name) {
+    lines.push(formatTwoColumns('Batch:', order.batch.name, width))
   }
   const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleString('id-ID') : new Date().toLocaleString('id-ID')
   lines.push(formatTwoColumns('Waktu:', orderDate, width))
@@ -279,13 +282,13 @@ export function buildKitchenEscPosBuffer(order, width = 32, brandName = '') {
   const dividerDouble = '='.repeat(width)
   pushText(dividerDouble)
 
-  // 4. Metadata Pesanan (No. Pesanan, Pelanggan, Token, dan Waktu)
+  // 4. Metadata Pesanan (No. Pesanan, Pelanggan, WhatsApp, dan Waktu)
   pushBytes(ESC_POS.ALIGN_LEFT)
   pushBytes(ESC_POS.BOLD_ON)
   pushText(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
   pushText(formatTwoColumns('Pelanggan:', order.customer?.name || 'Pelanggan', width))
-  if (order.customer?.token) {
-    pushText(formatTwoColumns('Token Antrean:', '#' + order.customer.token, width))
+  if (order.customer?.phone) {
+    pushText(formatTwoColumns('WhatsApp:', order.customer.phone, width))
   }
   pushBytes(ESC_POS.BOLD_OFF)
 
@@ -381,13 +384,16 @@ export function buildCustomerEscPosBuffer(order, width = 32, brandName = '') {
   const dividerDouble = '='.repeat(width)
   pushText(dividerSingle)
 
-  // 4. Metadata Pesanan (No. Pesanan, Nama, Token, Waktu, Pembayaran)
+  // 4. Metadata Pesanan (No. Pesanan, Nama, WhatsApp, Waktu, Pembayaran)
   pushBytes(ESC_POS.ALIGN_LEFT)
   pushBytes(ESC_POS.BOLD_ON)
   pushText(formatTwoColumns('No. Pesanan:', order.orderId || order.id || '-', width))
   pushText(formatTwoColumns('Nama Pemesan:', order.customer?.name || 'Pelanggan', width))
-  if (order.customer?.token) {
-    pushText(formatTwoColumns('Token Pelanggan:', '#' + order.customer.token, width))
+  if (order.customer?.phone) {
+    pushText(formatTwoColumns('WhatsApp:', order.customer.phone, width))
+  }
+  if (order.channel === 'preorder' && order.batch?.name) {
+    pushText(formatTwoColumns('Batch:', order.batch.name, width))
   }
   pushBytes(ESC_POS.BOLD_OFF)
 

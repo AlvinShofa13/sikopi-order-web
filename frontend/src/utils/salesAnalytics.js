@@ -24,7 +24,11 @@ export function paymentBreakdown(orders = []) {
   const acc = new Map()
   for (const ord of orders || []) {
     const raw = (ord.payment?.method || 'unknown').toLowerCase()
-    const label = raw === 'qris' ? 'QRIS' : raw === 'cash' || raw === 'tunai' ? 'Tunai di Kasir' : raw
+    const label =
+      raw === 'transfer' ? 'Transfer QRIS + Bukti'
+        : raw === 'qris' ? 'QRIS'
+          : raw === 'cash' || raw === 'tunai' ? 'Tunai di Kasir'
+            : raw
     const cur = acc.get(raw) || { method: raw, label, count: 0, pct: 0, revenue: 0 }
     cur.count += 1
     cur.revenue += ord.breakdown?.total || 0
@@ -49,10 +53,17 @@ export function downloadFromUrl(url, filename) {
 const csvCell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
 // Client-side CSV fallback (same columns as GET /orders/export?format=csv).
 export function ordersToCsv(orders = []) {
-  const header = ['No Pesanan', 'Waktu', 'Pelanggan', 'Telepon', 'Token', 'Tipe Layanan', 'Menu', 'Qty', 'Total Order', 'Metode Bayar', 'Status Bayar']
+  const header = ['No Pesanan', 'Waktu', 'Channel', 'Batch', 'Pelanggan', 'WhatsApp', 'Menu', 'Qty', 'Total Order', 'Metode Bayar', 'Status Bayar']
   const lines = [header.map(csvCell).join(',')]
   for (const ord of orders || []) {
-    const base = [ord.orderId, ord.createdAt, ord.customer?.name, ord.customer?.phone, ord.customer?.token || '-', ord.customer?.orderType]
+    const base = [
+      ord.orderId,
+      ord.createdAt,
+      ord.channel === 'preorder' ? 'Open PO' : 'On-site',
+      ord.batch?.name || '-',
+      ord.customer?.name,
+      ord.customer?.phone
+    ]
     if (ord.items?.length) {
       for (const it of ord.items) {
         lines.push([...base, it.name, it.quantity, ord.breakdown?.total || 0, ord.payment?.label || ord.payment?.method, ord.payment?.status].map(csvCell).join(','))

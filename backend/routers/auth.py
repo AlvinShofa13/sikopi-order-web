@@ -1,43 +1,29 @@
 import os
-import time
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
-from auth_dep import issue_admin_token, revoke_admin_token
+from auth_dep import (
+    clear_fails,
+    client_ip,
+    issue_admin_token,
+    prune_fails,
+    record_fail,
+    revoke_admin_token,
+)
 from database import get_db
 from schemas import AdminLoginRequest, AdminLoginResponse
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# Rate limit login: max 15x gagal per 5 menit per akun, plus 60x per IP
-# (vite proxy membuat semua dev terlihat dari 127.0.0.1 — kunci per akun
-# mencegah satu pelaku mengunci admin yang sah).
-# ponytail: in-memory per proses; cukup untuk 1 instance kasir.
-_FAILS: dict[str, list[float]] = {}
 MAX_FAILS_PER_ACCOUNT = 15
 MAX_FAILS_PER_IP = 60
-WINDOW_SEC = 300
-
-
-def _client_ip(request: Request) -> str:
-    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    if fwd:
-        return fwd
-    return request.client.host if request.client else "unknown"
-
-
-def _prune(ip: str, key: str) -> int:
-    now = time.monotonic()
-    for k in (ip, key):
-        _FAILS[k] = [t for t in _FAILS.get(k, []) if now - t < WINDOW_SEC]
-    return max(len(_FAILS[ip]), len(_FAILS[key]))
 
 
 @router.post("/login", response_model=AdminLoginResponse)
 def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depends(get_db)):
     req_email = payload.email.strip().lower()
-    ip = _client_ip(request)
+    ip = client_ip(request)
     key = f"{ip}|{req_email}"
-    if _prune(ip, key) >= MAX_FAILS_PER_IP or len(_FAILS[key]) >= MAX_FAILS_PER_ACCOUNT:
+    if prune_fails(key) >= MAX_FAILS_PER_IP or prune_fails(f"acct:{req_email}") >= MAX_FAILS_PER_ACCOUNT:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Terlalu banyak percobaan login. Coba lagi dalam 5 menit."
@@ -52,12 +38,12 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
             detail="Server belum dikonfigurasi (ADMIN_EMAIL / ADMIN_PASSWORD kosong)."
         )
 
-    req_email = payload.email.strip().lower()
     req_password = payload.password.strip()
 
     if req_email == admin_email and req_password == admin_password:
-        _FAILS.pop(ip, None)
-        _FAILS.pop(key, None)
+        clear_fails(key)
+        clear_fails(f"acct:{req_email}")
+        clear_fails(f"ip:{ip}")
         return AdminLoginResponse(
             success=True,
             message="Autentikasi admin berhasil.",
@@ -67,9 +53,9 @@ def admin_login(payload: AdminLoginRequest, request: Request, db: Session = Depe
             role="Admin & Kasir"
         )
 
-    now = time.monotonic()
-    _FAILS.setdefault(ip, []).append(now)
-    _FAILS.setdefault(key, []).append(now)
+    record_fail(key)
+    record_fail(f"acct:{req_email}")
+    record_fail(f"ip:{ip}")
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Email atau password admin salah."

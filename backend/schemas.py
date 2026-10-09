@@ -62,20 +62,20 @@ class OrderItemPayload(BaseModel):
 class CustomerPayload(BaseModel):
     name: str
     phone: Optional[str] = "-"
-    token: Optional[str] = None
-    orderType: Optional[str] = "Makan di Tempat"
-    tableOrAddress: Optional[str] = "Meja Reguler"
     specialRequest: Optional[str] = "-"
 
 
 class PaymentPayload(BaseModel):
-    method: str = "qris"  # 'qris' or 'cash'
-    label: Optional[str] = "QRIS"
+    method: str = "transfer"  # 'transfer' (transfer + upload bukti) or 'cash' (bayar di kasir)
+    label: Optional[str] = "Transfer (QRIS)"
     reference: Optional[str] = None
     status: Optional[str] = "Menunggu Pembayaran"
 
 
 class BreakdownPayload(BaseModel):
+    # Tidak dipakai sebagai sumber kebenaran: server menghitung ulang dari
+    # harga menu di database. Field dipertahankan agar payload client lama
+    # tidak gagal validasi.
     subtotal: float = 0.0
     ecoFee: float = 0.0
     tax: float = 0.0
@@ -83,6 +83,10 @@ class BreakdownPayload(BaseModel):
 
 
 class OrderCreate(BaseModel):
+    orderId: Optional[str] = None  # kode transaksi dari client (dipakai juga pada nama file bukti)
+    channel: str = "pos"  # 'pos' | 'preorder'
+    batchId: Optional[int] = None
+    paymentProof: Optional[str] = None
     customer: CustomerPayload
     payment: PaymentPayload
     items: List[OrderItemPayload]
@@ -97,15 +101,12 @@ class OrderStatusUpdate(BaseModel):
     cash_change: Optional[float] = None
 
 
-# --- Token Schemas ---
-class TokenVerifyRequest(BaseModel):
+# --- Preorder / Mode Schemas ---
+class ModeSwitchRequest(BaseModel):
+    mode: str  # 'pos' (on-site) | 'preorder' (open PO); keduanya tidak bisa aktif bersamaan
+
+
+class PreorderBatchCreate(BaseModel):
     name: str
-    token: str
-
-
-class TokenVerifyResponse(BaseModel):
-    success: bool
-    message: str
-    isCompletedOrder: Optional[bool] = False
-    orderId: Optional[str] = None
-    newToken: Optional[str] = None
+    order_deadline: Optional[datetime] = None
+    pickup_date: Optional[datetime] = None

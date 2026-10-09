@@ -18,10 +18,7 @@ class OrderConnectionManager:
     async def broadcast(self, event: str, payload: dict):
         for connection in list(self.active_connections):
             try:
-                if event == "TOKEN_ROTATED":
-                    await connection.send_json({"event": event, **payload})
-                else:
-                    await connection.send_json({"event": event, "order": payload})
+                await connection.send_json({"event": event, "order": payload})
             except Exception:
                 self.disconnect(connection)
 

@@ -1,21 +1,15 @@
 import os
 import uuid
-from pathlib import Path
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from auth_dep import require_admin
 from database import get_db
 from models import MenuItem
+from routers.uploads import MAX_MENU_BYTES, MENU_DIR, save_image
 from schemas import MenuItemCreate, MenuItemUpdate, MenuItemResponse
 
 router = APIRouter(prefix="/menu", tags=["Menu Management"])
-
-UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-# SVG disengaja dikeluarkan: bisa berisi JavaScript (stored XSS via /uploads).
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 @router.get("", response_model=List[MenuItemResponse])
@@ -36,36 +30,7 @@ def get_menu_by_id(menu_id: str, db: Session = Depends(get_db)):
 @router.post("/upload")
 async def upload_menu_image(file: UploadFile = File(...), _admin: bool = Depends(require_admin)):
     """Upload file gambar menu ke backend dan hasilkan URL statis lokal (Admin)."""
-    if not file or not file.filename:
-        raise HTTPException(status_code=400, detail="File gambar tidak boleh kosong.")
-    try:
-        content = await file.read(MAX_UPLOAD_BYTES + 1)
-    finally:
-        await file.close()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Ukuran file gambar maksimal 10MB.")
-    
-    ext = Path(file.filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Format file '{ext}' tidak didukung. Format yang diperbolehkan: JPG, PNG, WEBP, GIF."
-        )
-
-    # Nama file unik & aman
-    unique_name = f"menu_{uuid.uuid4().hex[:12]}{ext}"
-    destination_path = os.path.join(UPLOADS_DIR, unique_name)
-
-    try:
-        with open(destination_path, "wb") as buffer:
-            buffer.write(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal menyimpan file gambar di backend: {str(e)}")
-
-    return {
-        "url": f"/uploads/{unique_name}",
-        "filename": unique_name
-    }
+    return {"url": await save_image(file, MENU_DIR, "menu", MAX_MENU_BYTES)}
 
 
 @router.post("", response_model=MenuItemResponse, status_code=status.HTTP_201_CREATED)

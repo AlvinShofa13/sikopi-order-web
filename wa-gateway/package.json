@@ -1,0 +1,16 @@
+{
+  "name": "sikopi-wa-gateway",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sidecar pengirim WhatsApp SIKopi via Baileys (self-hosted, tanpa pihak ketiga)",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4"
+  }
+}

@@ -1,6 +1,5 @@
-import random
 from sqlalchemy.orm import Session
-from models import MenuItem, AppSetting, TokenRecord
+from models import MenuItem
 
 
 INITIAL_MENUS = [
@@ -44,20 +43,10 @@ INITIAL_MENUS = [
 
 
 def seed_database(db: Session):
-    """Seed initial menu items and default active token if not already present."""
-    # 1. Seed Menus
+    """Seed menu awal bila database masih kosong."""
     existing_count = db.query(MenuItem).count()
     if existing_count == 0:
         for item_data in INITIAL_MENUS:
-            item = MenuItem(**item_data)
-            db.add(item)
+            db.add(MenuItem(**item_data))
         db.commit()
         print("[SEED] Successfully populated 4 initial menu items.")
-
-    # 2. Seed Active Token
-    active_token_setting = db.query(AppSetting).filter(AppSetting.key == "active_token").first()
-    if not active_token_setting:
-        initial_token = str(random.randint(100, 999))
-        db.add(AppSetting(key="active_token", value=initial_token))
-        db.commit()
-        print(f"[SEED] Initial active token generated: {initial_token}")

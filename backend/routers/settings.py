@@ -1,10 +1,13 @@
+import os
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 
+from auth_dep import require_admin
 from database import get_db
 from models import AppSetting
+from routers.orders import normalize_phone
 
 router = APIRouter(prefix="/settings", tags=["Application Settings"])
 
@@ -14,45 +17,50 @@ class BrandingSettingsPayload(BaseModel):
     brand_name: Optional[str] = "SIKopi"
 
 
+def _get(db: Session, key: str, default: str) -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == key).first()
+    return row.value if row and row.value else default
+
+
 @router.get("/branding")
 def get_branding_settings(db: Session = Depends(get_db)):
     """Retrieve current branding configuration (icon and name)."""
-    icon_row = db.query(AppSetting).filter(AppSetting.key == "brand_icon").first()
-    name_row = db.query(AppSetting).filter(AppSetting.key == "brand_name").first()
+    return {
+        "brand_icon": _get(db, "brand_icon", "leaf"),
+        "brand_name": _get(db, "brand_name", "SIKopi"),
+    }
+
+
+@router.get("/public")
+def get_public_settings(db: Session = Depends(get_db)):
+    """Konfigurasi yang boleh dilihat customer: nama kafe, mode operasional,
+    batch Open PO aktif, dan nomor WhatsApp admin (dari .env)."""
+    from routers.preorder import mode_payload  # import lokal: cegah siklus import
 
     return {
-        "brand_icon": icon_row.value if icon_row else "leaf",
-        "brand_name": name_row.value if name_row else "SIKopi"
+        "brand_name": _get(db, "brand_name", "SIKopi"),
+        "brand_icon": _get(db, "brand_icon", "leaf"),
+        "admin_whatsapp": normalize_phone(os.getenv("ADMIN_WHATSAPP")),
+        **mode_payload(db),
     }
 
 
 @router.put("/branding")
-def update_branding_settings(payload: BrandingSettingsPayload, db: Session = Depends(get_db)):
+def update_branding_settings(
+    payload: BrandingSettingsPayload,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_admin),
+):
     """Update branding configuration (Admin). Default is leaf icon."""
     target_icon = payload.brand_icon.strip() if payload.brand_icon else "leaf"
     target_name = payload.brand_name.strip() if payload.brand_name else "SIKopi"
 
-    # Update or insert brand_icon
-    icon_row = db.query(AppSetting).filter(AppSetting.key == "brand_icon").first()
-    if not icon_row:
-        icon_row = AppSetting(key="brand_icon", value=target_icon)
-        db.add(icon_row)
-    else:
-        icon_row.value = target_icon
-
-    # Update or insert brand_name
-    name_row = db.query(AppSetting).filter(AppSetting.key == "brand_name").first()
-    if not name_row:
-        name_row = AppSetting(key="brand_name", value=target_name)
-        db.add(name_row)
-    else:
-        name_row.value = target_name
+    for key, value in (("brand_icon", target_icon), ("brand_name", target_name)):
+        row = db.query(AppSetting).filter(AppSetting.key == key).first()
+        if row:
+            row.value = value
+        else:
+            db.add(AppSetting(key=key, value=value))
 
     db.commit()
-    db.refresh(icon_row)
-    db.refresh(name_row)
-
-    return {
-        "brand_icon": icon_row.value,
-        "brand_name": name_row.value
-    }
+    return {"brand_icon": target_icon, "brand_name": target_name}

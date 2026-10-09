@@ -1,19 +1,73 @@
 import csv
 import io
 import random
+import re
+import secrets
 from datetime import datetime, timezone
 from typing import Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, Query, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from auth_dep import require_admin, is_valid_admin_token
+from auth_dep import client_ip, is_valid_admin_token, prune_fails, record_fail, require_admin
 from database import get_db
-from models import Order, OrderItem, TokenRecord
+from models import AppSetting, MenuItem, Order, OrderItem, PreorderBatch
 from realtime import order_manager
+from routers.preorder import MODE_POS, MODE_PREORDER, active_batch, get_active_mode
+from routers.uploads import ORDER_CODE_RE
 from schemas import OrderCreate, OrderStatusUpdate
+from wa_client import send_wa_text
+from wa_templates import order_created_text, payment_verified_text, status_text
 
 router = APIRouter(prefix="/orders", tags=["Orders Management"])
+
+# Alfabet kode transaksi: angka + huruf besar tanpa karakter ambigu
+# (I, L, O, U dihilangkan) supaya mudah dibaca/dibacakan pelanggan di kasir.
+CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+CHANNEL_POS = MODE_POS
+CHANNEL_PREORDER = MODE_PREORDER
+
+PAYMENT_LABELS = {
+    "transfer": "Transfer QRIS + Bukti",
+    "qris": "QRIS",  # legacy
+    "cash": "Bayar di Kasir (Tunai / EDC)",
+}
+MAX_ORDER_LOOKUPS_PER_IP = 60
+
+
+def _brand_name(db: Session) -> str:
+    row = db.query(AppSetting).filter(AppSetting.key == "brand_name").first()
+    return (row.value if row and row.value else "SIKopi").strip() or "SIKopi"
+
+
+def _notify_customer(phone: str, text: str) -> None:
+    """Pengiriman WA otomatis (BackgroundTasks). Gagal kirim = log saja,
+    tidak pernah menggagalkan alur pesanan."""
+    try:
+        if phone and text:
+            send_wa_text(phone, text)
+    except Exception:  # sabuk + suspender: wa_client sudah catch, tapi jangan pernah bocor
+        pass
+
+
+def new_order_code() -> str:
+    """Kode transaksi acak 8 char (32^8 kombinasi), mis. SK-7F3K9Q2M."""
+    return "SK-" + "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+
+
+def normalize_phone(raw: str | None) -> str:
+    """Normalisasi nomor Indonesia ke format wa.me (62xxx, tanpa '+' / spasi).
+
+    '0812...' / '+62 812...' / '812...' -> '62812...'
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    if not digits:
+        return ""
+    if digits.startswith("62"):
+        digits = digits[2:]
+    elif digits.startswith("0"):
+        digits = digits[1:]
+    return f"62{digits}"
 
 
 @router.websocket("/ws")
@@ -42,10 +96,14 @@ def serialize_order(ord: Order) -> Dict[str, Any]:
     return {
         "orderId": ord.order_id,
         "createdAt": ord.created_at.isoformat() if ord.created_at else "",
+        "channel": ord.channel or CHANNEL_POS,
+        "batch": (
+            {"id": ord.batch.id, "name": ord.batch.name, "pickupDate": ord.batch.pickup_date.isoformat() if ord.batch.pickup_date else None}
+            if ord.batch else None
+        ),
         "customer": {
             "name": ord.customer_name,
             "phone": ord.customer_phone,
-            "token": ord.customer_token,
             "orderType": ord.order_type,
             "tableOrAddress": ord.table_or_address,
             "specialRequest": ord.special_request,
@@ -56,6 +114,7 @@ def serialize_order(ord: Order) -> Dict[str, Any]:
             "reference": ord.payment_reference,
             "status": ord.payment_status,
             "paid": bool(ord.is_paid),
+            "proof": ord.payment_proof or None,
             "cashReceived": float(getattr(ord, "cash_received", 0.0) or 0.0),
             "cashChange": float(getattr(ord, "cash_change", 0.0) or 0.0),
         },
@@ -88,8 +147,8 @@ def get_all_orders(db: Session = Depends(get_db), _admin: bool = Depends(require
 
 
 EXPORT_COLUMNS = [
-    "No Pesanan", "Waktu", "Pelanggan", "Telepon", "Token",
-    "Tipe Layanan", "Meja/Alamat", "Menu", "Qty", "Harga Satuan",
+    "No Pesanan", "Waktu", "Channel", "Batch", "Pelanggan", "Telepon",
+    "Menu", "Qty", "Harga Satuan",
     "Subtotal Item", "Total Order", "Metode Bayar", "Status Bayar", "Status Order",
 ]
 
@@ -102,11 +161,10 @@ def _export_rows(db: Session):
         base = [
             ord.order_id,
             ord.created_at.isoformat() if ord.created_at else "",
+            "Open PO" if ord.channel == CHANNEL_PREORDER else "On-site",
+            ord.batch.name if ord.batch else "-",
             ord.customer_name,
             ord.customer_phone,
-            ord.customer_token or "-",
-            ord.order_type,
-            ord.table_or_address,
             "", 0, 0.0, 0.0,
             ord.total,
             ord.payment_label or ord.payment_method,
@@ -116,10 +174,10 @@ def _export_rows(db: Session):
         if ord.items:
             for it in ord.items:
                 r = list(base)
-                r[7] = it.name
-                r[8] = it.quantity
-                r[9] = it.price
-                r[10] = it.subtotal
+                r[6] = it.name
+                r[7] = it.quantity
+                r[8] = it.price
+                r[9] = it.subtotal
                 rows.append(r)
         else:
             rows.append(base)
@@ -162,7 +220,7 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
     payment_methods = []
     for r in pay_q:
         method = (r.method or "unknown").lower()
-        label = "QRIS" if method == "qris" else ("Tunai di Kasir" if method in ("cash", "tunai") else (r.method or "-"))
+        label = PAYMENT_LABELS.get(method, r.method or "-")
         count = int(r.count or 0)
         payment_methods.append({
             "method": method,
@@ -173,6 +231,21 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
         })
     payment_methods.sort(key=lambda x: x["count"], reverse=True)
 
+    chan_q = (
+        db.query(Order.channel.label("channel"), func.count(Order.id).label("count"))
+        .group_by(Order.channel)
+        .all()
+    )
+    channels = [
+        {
+            "channel": (r.channel or CHANNEL_POS),
+            "label": "Open PO" if r.channel == CHANNEL_PREORDER else "On-site",
+            "count": int(r.count or 0),
+        }
+        for r in chan_q
+    ]
+    channels.sort(key=lambda x: x["count"], reverse=True)
+
     return {
         "summary": {
             "total_orders": total_orders,
@@ -181,6 +254,7 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
         },
         "top_menus": top_menus,
         "payment_methods": payment_methods,
+        "channels": channels,
     }
 
 
@@ -214,7 +288,7 @@ def export_sales_data(format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"
         cell.font = Font(bold=True)
     for r in rows:
         ws.append(r)
-    widths = [12, 20, 18, 12, 8, 14, 14, 28, 6, 12, 13, 12, 14, 18, 18]
+    widths = [12, 20, 10, 22, 18, 14, 28, 6, 12, 13, 12, 22, 18, 18]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
     buf = io.BytesIO()
@@ -228,123 +302,190 @@ def export_sales_data(format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"
 
 
 @router.get("/{order_id}")
-def get_order_by_id(order_id: str, db: Session = Depends(get_db)):
-    """Retrieve a single order by orderId."""
-    ord = db.query(Order).filter(Order.order_id == order_id).first()
+def get_order_by_id(order_id: str, request: Request, db: Session = Depends(get_db)):
+    """Rincian satu pesanan untuk halaman status digital pelanggan.
+
+    Akses publik berbasis kode transaksi 8 karakter acak (~1 triliun kombinasi),
+    jadi tebakan tidak realistis; rate limit per IP tetap berjaga sebagai pengaman
+    kedua. Endpoint yang sama juga dipakai panel kasir.
+    """
+    ip_key = f"order:{client_ip(request)}"
+    if prune_fails(ip_key) >= MAX_ORDER_LOOKUPS_PER_IP:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Terlalu banyak permintaan. Coba lagi dalam 5 menit.",
+        )
+
+    ord = db.query(Order).filter(Order.order_id == (order_id or "").strip().upper()).first()
     if not ord:
-        raise HTTPException(status_code=404, detail="Pesanan tidak ditemukan.")
+        record_fail(ip_key)  # hanya kode yang salah dihitung; kode valid dihapus tak perlu
+        raise HTTPException(status_code=404, detail="Kode pesanan tidak ditemukan. Periksa kembali kode transaksi Anda.")
     return serialize_order(ord)
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-async def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
-    """Place a new order, calculate totals, and burn the customer token."""
-    # 1. Generate Order Number
-    seq = random.randint(10000, 99900)
-    order_id = f"HYT-2026-{seq}"
-    now = datetime.now(timezone.utc)
+def _code_taken(db: Session, order_id: str) -> bool:
+    return db.query(Order.id).filter(Order.order_id == order_id).first() is not None
 
-    # 2. Calculate Subtotal from Items
+
+def _resolve_batch(db: Session, batch_id: int | None) -> PreorderBatch:
+    """Ambil batch Open PO yang masih terbuka (id opsional = auto-assign)."""
+    batch = None
+    if batch_id is not None:
+        batch = db.query(PreorderBatch).filter(PreorderBatch.id == batch_id).first()
+        if not batch:
+            raise HTTPException(status_code=422, detail="Batch Open PO tidak ditemukan.")
+        if batch.status != "open":
+            raise HTTPException(status_code=422, detail=f"Batch '{batch.name}' sudah ditutup. Pilih batch yang sedang dibuka.")
+    else:
+        batch = active_batch(db)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Belum ada batch Open PO yang dibuka. Hubungi kasir untuk info jadwal pemesanan.",
+        )
+    return batch
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_order(
+    payload: OrderCreate,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """Catat pesanan baru, lalu kirim notifikasi WhatsApp otomatis.
+
+    Gerbang bisnis (server = sumber kebenaran):
+    - Channel selalu mengikuti mode aktif global (customer tidak memilih).
+    - Harga & total dihitung ulang dari `menu_items`, tidak pernah dari client.
+    - Channel `preorder` wajib punya batch terbuka DAN bukti pembayaran terupload.
+    - Kode transaksi dari client dipakai agar nama file bukti sudah terikat ke
+      pesanan sejak awal; divalidasi format + keunikan.
+    """
+    if not payload.items:
+        raise HTTPException(status_code=422, detail="Keranjang pesanan kosong.")
+
+    # 1. Channel = mode aktif global (saling eksklusif, customer tidak memilih)
+    active_mode = get_active_mode(db)
+    channel = (payload.channel or active_mode).strip().lower()
+    if channel != active_mode:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Mode pemesanan saat ini adalah '{active_mode}'. Muat ulang halaman pembayaran.",
+        )
+
+    batch = None
+    if channel == CHANNEL_PREORDER:
+        batch = _resolve_batch(db, payload.batchId)
+
+    # 2. Metode pembayaran + bukti
+    method = (payload.payment.method or "transfer").strip().lower()
+    method = "qris" if method == "qris" else ("cash" if method == "cash" else "transfer")
+    proof_url = (payload.paymentProof or "").strip() or None
+    if method == "transfer" and not proof_url:
+        raise HTTPException(
+            status_code=422,
+            detail="Pesanan belum dikirim: unggah bukti pembayaran terlebih dahulu.",
+        )
+    if proof_url and not proof_url.startswith("/uploads/proof/"):
+        raise HTTPException(status_code=422, detail="Bukti pembayaran tidak valid.")
+
+    # 3. Harga dari database (abaikan price & breakdown dari client)
     items_data = []
     subtotal = 0.0
-
     for it in payload.items:
-        it_subtotal = it.price * it.quantity
-        subtotal += it_subtotal
+        menu_item = db.query(MenuItem).filter(MenuItem.id == (it.id or "").strip()).first()
+        if not menu_item:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Menu '{it.name}' sudah tidak tersedia. Muat ulang halaman menu.",
+            )
+        line_total = float(menu_item.price) * int(it.quantity)
+        subtotal += line_total
         items_data.append({
-            "menu_item_id": it.id,
-            "name": it.name,
-            "price": it.price,
-            "quantity": it.quantity,
+            "menu_item_id": menu_item.id,
+            "name": menu_item.name,
+            "price": float(menu_item.price),
+            "quantity": int(it.quantity),
             "notes": it.notes or "",
-            "subtotal": it_subtotal
+            "subtotal": line_total,
         })
 
-    # Mode Pengujian: Biaya tambahan 0 sehingga total murni akumulasi item
-    eco_fee = 0.0
-    tax = 0.0
-    total = subtotal
+    eco_fee = 0.0   # mode uji: biaya kemasan 0
+    tax = 0.0       # mode uji: PB1 0
+    total = subtotal + eco_fee + tax
 
-    if payload.breakdown:
-        subtotal = payload.breakdown.subtotal
-        eco_fee = payload.breakdown.ecoFee
-        tax = payload.breakdown.tax
-        total = payload.breakdown.total
+    # 4. Identitas & kontak pelanggan
+    customer_name = (payload.customer.name or "").strip() or "Pelanggan"
+    phone = normalize_phone(payload.customer.phone)
+    if len(phone) < 11 or len(phone) > 16:
+        raise HTTPException(
+            status_code=422,
+            detail="Nomor WhatsApp tidak valid. Contoh: 0812-3456-7890 (minimal 9 digit).",
+        )
 
-    # 3. Create Order
-    is_qris = payload.payment.method.lower() == "qris"
+    # 5. Kode transaksi (dari client, divalidasi & dicek unik)
+    raw_code = (payload.orderId or "").strip().upper()
+    if ORDER_CODE_RE.match(raw_code) and not _code_taken(db, raw_code):
+        order_id = raw_code
+    else:
+        order_id = new_order_code()
+        for _ in range(5):
+            if not _code_taken(db, order_id):
+                break
+            order_id = new_order_code()
+
     new_order = Order(
         order_id=order_id,
-        created_at=now,
-        customer_name=payload.customer.name.strip() or "Pelanggan",
-        customer_phone=payload.customer.phone or "-",
-        customer_token=payload.customer.token or None,
-        order_type=payload.customer.orderType or "Makan di Tempat",
-        table_or_address=payload.customer.tableOrAddress or "Meja Reguler",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        customer_name=customer_name,
+        customer_phone=phone,
+        customer_token=None,  # sistem token dihapus
         special_request=payload.customer.specialRequest or "-",
-        payment_method=payload.payment.method,
-        payment_label=payload.payment.label or ("QRIS" if is_qris else "Bayar di Kasir (Tunai / EDC)"),
+        channel=channel,
+        batch_id=batch.id if batch else None,
+        payment_method=method,
+        payment_label=PAYMENT_LABELS[method],
         payment_reference=payload.payment.reference or f"REF-{random.randint(100000, 999000)}",
         payment_status="Menunggu Pembayaran",
+        payment_proof=proof_url,
+        is_paid=False,
         subtotal=subtotal,
         eco_fee=eco_fee,
         tax=tax,
         total=total,
-        order_status="Diterima & Disiapkan"
+        order_status="Diterima & Disiapkan",
     )
     db.add(new_order)
     db.flush()
 
-    # 4. Insert Order Items
     for item_dict in items_data:
-        order_item = OrderItem(
-            order_id=order_id,
-            menu_item_id=item_dict["menu_item_id"],
-            name=item_dict["name"],
-            price=item_dict["price"],
-            quantity=item_dict["quantity"],
-            notes=item_dict["notes"],
-            subtotal=item_dict["subtotal"]
-        )
-        db.add(order_item)
-
-    # 5. Burn Customer Token (One-time use strictly enforced: reject reuse)
-    cust_token = payload.customer.token
-    if cust_token:
-        clean_token = str(cust_token).strip()
-        existing_token = db.query(TokenRecord).filter(TokenRecord.token == clean_token).first()
-        if existing_token and existing_token.is_used:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f'Token "{clean_token}" sudah dipakai. Minta token baru ke kasir.'
-            )
-        if existing_token:
-            existing_token.is_used = True
-            existing_token.order_id = order_id
-            existing_token.customer_name = payload.customer.name
-            existing_token.burned_at = now
-        else:
-            db.add(TokenRecord(
-                token=clean_token,
-                is_used=True,
-                customer_name=payload.customer.name,
-                order_id=order_id,
-                burned_at=now
-            ))
+        db.add(OrderItem(order_id=order_id, **item_dict))
 
     db.commit()
     db.refresh(new_order)
     serialized = serialize_order(new_order)
     await order_manager.broadcast("NEW_ORDER", serialized)
+    # Notifikasi WhatsApp otomatis (fire-and-forget; gagal kirim tak menggagalkan order)
+    background.add_task(_notify_customer, phone, order_created_text(serialized, _brand_name(db)))
     return serialized
 
 
 @router.patch("/{order_id}/status")
-async def update_order_status(order_id: str, payload: OrderStatusUpdate, db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
-    """Update order lifecycle status or payment status (Admin)."""
+async def update_order_status(
+    order_id: str,
+    payload: OrderStatusUpdate,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_admin),
+):
+    """Update status pembayaran/penyiapan (Admin). Setiap perubahan nyata
+    (lunas, ganti status) otomatis dikirim ke WhatsApp customer."""
     ord = db.query(Order).filter(Order.order_id == order_id).first()
     if not ord:
         raise HTTPException(status_code=404, detail="Pesanan tidak ditemukan.")
+
+    was_paid = bool(ord.is_paid)
+    prev_status = ord.order_status
 
     if payload.order_status:
         ord.order_status = payload.order_status
@@ -364,6 +505,15 @@ async def update_order_status(order_id: str, payload: OrderStatusUpdate, db: Ses
     db.refresh(ord)
     serialized = serialize_order(ord)
     await order_manager.broadcast("STATUS_UPDATED", serialized)
+
+    # Notifikasi WhatsApp otomatis, hanya untuk perubahan nyata
+    # (is_paid dihitung dari hasil akhir agar jalur payment_status "Lunas" ikut tercakup)
+    brand = _brand_name(db)
+    phone = ord.customer_phone or ""
+    if bool(ord.is_paid) and not was_paid:
+        background.add_task(_notify_customer, phone, payment_verified_text(serialized, brand))
+    if payload.order_status and payload.order_status != prev_status:
+        background.add_task(_notify_customer, phone, status_text(serialized, ord.order_status, brand))
     return serialized
 
 

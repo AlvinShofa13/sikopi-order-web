@@ -241,6 +241,18 @@ defineProps({
       <line x1="6" x2="6" y1="20" y2="16" />
     </g>
 
+    <!-- Camera / Upload Bukti -->
+    <g v-else-if="name === 'camera'">
+      <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" />
+      <circle cx="12" cy="13" r="3.5" />
+    </g>
+
+    <!-- Rotate / Kembali -->
+    <g v-else-if="name === 'rotate-ccw'">
+      <polyline points="1 4 1 10 7 10" />
+      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+    </g>
+
     <!-- Info -->
     <g v-else>
       <circle cx="12" cy="12" r="10" />

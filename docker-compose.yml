@@ -15,4 +15,24 @@ services:
       - ./backend/.env
     # NOTE: jangan tambah blok `environment:` untuk secret di sini —
     # `environment:` menimpa `env_file`, dan substitusi kosong akan mengosongkan secret di container.
+    environment:
+      # Di dalam jaringan docker, gateway dijangkau via nama service.
+      - WA_GATEWAY_URL=http://wa-gateway:3001
+    depends_on:
+      - wa-gateway
+    restart: unless-stopped
+
+  # Sidecar pengirim WhatsApp (Baileys, self-hosted, tanpa pihak ketiga).
+  # Pairing sekali via QR di panel admin (tab Mode & Batch -> kartu WhatsApp).
+  wa-gateway:
+    build:
+      context: ./wa-gateway
+      dockerfile: Dockerfile
+    container_name: sikopi_wa_gateway
+    ports:
+      # Hanya untuk pemakaian lokal; JANGAN expose ke publik tanpa autentikasi.
+      - "127.0.0.1:3001:3001"
+    volumes:
+      # Sesi pairing Baileys — jangan dihapus (atau harus scan QR ulang).
+      - ./wa-gateway/auth:/app/auth
     restart: unless-stopped

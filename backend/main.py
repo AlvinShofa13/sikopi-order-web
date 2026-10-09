@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from database import engine, SessionLocal, Base, ensure_schema
 from seed import seed_database
-from routers import auth, menu, tokens, orders, settings
+from routers import auth, menu, orders, preorder, settings, uploads, wa
 
 # Ensure backend uploads directory exists
 UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     # 1b. Migrate existing DBs (tambah kolom baru + backfill, idempoten)
     ensure_schema()
     
-    # 2. Seed Initial Menus and Token
+    # 2. Seed Initial Menus
     db = SessionLocal()
     try:
         seed_database(db)
@@ -56,11 +56,14 @@ app.add_middleware(
 # Include Routers under /api
 app.include_router(auth.router, prefix="/api")
 app.include_router(menu.router, prefix="/api")
-app.include_router(tokens.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
+app.include_router(preorder.router, prefix="/api")
 app.include_router(settings.router, prefix="/api")
+app.include_router(uploads.router, prefix="/api")
+app.include_router(wa.router, prefix="/api")
 
-# Static files for uploaded images
+# Static files untuk gambar menu (backend/uploads/menu) & bukti bayar (uploads/proof).
+# Foto menu lawas sebelum pemindahan folder tetap terbaca dari root /uploads.
 app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 

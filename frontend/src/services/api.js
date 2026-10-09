@@ -117,24 +117,60 @@ export const api = {
     }
   },
 
-  // Tokens
-  tokens: {
-    async getActive() {
-      return request('/tokens/active')
+  // Preorder & mode operasional (saling eksklusif: 'pos' | 'preorder')
+  preorder: {
+    async getModes() {
+      return request('/preorder/modes')
     },
-    async generate() {
-      return request('/tokens/generate', {
-        method: 'POST'
+    async switchMode(mode) {
+      return request('/preorder/modes', {
+        method: 'PUT',
+        body: JSON.stringify({ mode })
       })
     },
-    async verify(name, token) {
-      return request('/tokens/verify', {
+    async listBatches() {
+      return request('/preorder/batches')
+    },
+    async createBatch(payload) {
+      return request('/preorder/batches', {
         method: 'POST',
-        body: JSON.stringify({ name, token })
+        body: JSON.stringify(payload)
       })
     },
-    async getBurned() {
-      return request('/tokens/burned')
+    async closeBatch(batchId) {
+      return request(`/preorder/batches/${batchId}/close`, {
+        method: 'PATCH'
+      })
+    },
+    async reopenBatch(batchId) {
+      return request(`/preorder/batches/${batchId}/reopen`, {
+        method: 'PATCH'
+      })
+    }
+  },
+
+  // Upload bukti pembayaran (publik, maks 2MB, nama file memakai kode transaksi)
+  uploads: {
+    async proof(code, file) {
+      const formData = new FormData()
+      formData.append('file', file)
+      return request(`/uploads/proof?code=${encodeURIComponent(code)}`, {
+        method: 'POST',
+        body: formData
+      })
+    }
+  },
+
+  // Gateway WhatsApp (Baileys) — status pairing & kirim langsung, khusus admin
+  wa: {
+    async getStatus() {
+      return request('/wa/status')
+    },
+    async sendTest() {
+      return request('/wa/test', { method: 'POST' })
+    },
+    async sendReceipt(orderId) {
+      return request(`/wa/order/${encodeURIComponent(orderId)}/receipt`, { method: 'POST' })
     }
   },
 
@@ -185,6 +221,11 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(payload)
       })
+    },
+    // Konfigurasi publik untuk halaman pelanggan: nama kafe, mode, batch aktif,
+    // nomor WhatsApp admin.
+    async getPublic() {
+      return request('/settings/public')
     }
   }
 }

@@ -39,6 +39,13 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE orders ADD COLUMN cash_received FLOAT DEFAULT 0.0"))
         if "cash_change" not in cols:
             conn.execute(text("ALTER TABLE orders ADD COLUMN cash_change FLOAT DEFAULT 0.0"))
+        # Channel + batch Open PO + bukti pembayaran
+        if "channel" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN channel VARCHAR(20) NOT NULL DEFAULT 'pos'"))
+        if "batch_id" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN batch_id INTEGER"))
+        if "payment_proof" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN payment_proof TEXT"))
         for dead in ("qris_payload", "qris_image_url"):
             if dead in cols:
                 conn.execute(text(f"ALTER TABLE orders DROP COLUMN {dead}"))

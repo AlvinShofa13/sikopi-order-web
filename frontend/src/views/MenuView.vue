@@ -15,12 +15,22 @@ const activeItemForNote = ref(null)
 const itemNoteInput = ref('')
 const { toastMessage, showToast } = createToast(2600)
 
+function formatDateTime(iso) {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
 onMounted(async () => {
   await store.fetchMenuFromAPI()
-  // Jika pelanggan belum input nama & token, buka modal verifikasi
-  if (!store.customerSession.isVerified) {
-    store.openAuthModal()
-  }
+  // Menu & keranjang terbuka untuk semua. Nama & nomor WhatsApp baru diminta
+  // di halaman pembayaran, jadi pelanggan tidak perlu login/daftar dulu.
+  store.fetchPublicSettings()
 })
 
 const categories = [
@@ -46,10 +56,6 @@ const filteredItems = computed(() => {
 
 function openNoteModal(item) {
   if (item.is_available === false) return
-  if (!store.customerSession.isVerified) {
-    store.openAuthModal()
-    return
-  }
   activeItemForNote.value = item
   itemNoteInput.value = ''
 }
@@ -68,10 +74,6 @@ function confirmAddWithNote() {
 
 function quickAddToCart(item) {
   if (item.is_available === false) return
-  if (!store.customerSession.isVerified) {
-    store.openAuthModal()
-    return
-  }
   store.addToCart(item)
   showToast(`${item.name} berhasil ditambahkan`)
 }
@@ -86,46 +88,36 @@ function goToCart() {
     <!-- Header Section -->
     <div class="menu-header-bar">
       <div class="container">
-        <div class="header-titles">
+<div class="header-titles">
           <h1 class="page-title">Pilihan Menu Kopi & Sandwich</h1>
-          
-          <!-- Customer Session Status Banner -->
-          <div v-if="store.customerSession.isVerified" class="customer-welcome-pill">
-            <AppIcon name="user" :size="15" />
-            <span>Halo, <strong>{{ store.customerSession.name }}</strong> (Token: <strong>{{ store.customerSession.token }}</strong>) — Silakan pilih hidangan favorit Anda.</span>
-          </div>
 
-          <div v-else class="customer-locked-banner">
-            <div class="locked-text-wrap">
-              <AppIcon name="shield-check" :size="20" class="lock-icon" />
-              <div>
-                <strong>Akses Menu Belum Terverifikasi</strong>
-                <p>Silakan masukkan Nama Anda dan Token 3 Digit dari kasir untuk membuka pilihan menu.</p>
-              </div>
-            </div>
-            <div class="locked-actions-wrap">
-              <button type="button" class="btn-unlock-auth" @click="store.openAuthModal()">
-                <AppIcon name="user" :size="15" />
-                <span>Input Nama & Token</span>
-              </button>
-            </div>
+          <!-- Mode Open PO sedang dibuka -->
+          <div v-if="store.activeMode === 'preorder' && store.activeBatch" class="customer-welcome-pill">
+            <AppIcon name="clock" :size="15" />
+            <span>
+              <strong>Open PO {{ store.activeBatch.name }}</strong> sedang dibuka
+              <template v-if="store.activeBatch.pickupDate">
+                — siap diambil {{ formatDateTime(store.activeBatch.pickupDate) }}
+              </template>
+              . Bisa pesan dari sini tanpa datang ke outlet.
+            </span>
           </div>
         </div>
 
-        <!-- Filter & Search Controls (Hanya jika terverifikasi) -->
-        <div v-if="store.customerSession.isVerified" class="search-filter-row">
+        <!-- Filter & Search Controls -->
+        <div class="search-filter-row">
           <!-- Search Field -->
           <div class="search-box">
             <AppIcon name="search" :size="18" class="search-icon" />
-            <input 
-              v-model="searchQuery" 
-              type="text" 
-              placeholder="Cari menu kopi atau makanan..." 
+            <input
+              v-model="searchQuery"
+              type="text"
+              placeholder="Cari menu kopi atau makanan..."
               class="search-input"
             />
-            <button 
-              v-if="searchQuery" 
-              class="clear-search-btn" 
+            <button
+              v-if="searchQuery"
+              class="clear-search-btn"
               @click="searchQuery = ''"
               title="Hapus pencarian"
             >
@@ -134,11 +126,11 @@ function goToCart() {
           </div>
         </div>
 
-        <!-- Category Horizontal Tabs (Hanya jika terverifikasi) -->
-        <div v-if="store.customerSession.isVerified" class="category-tabs-container">
+        <!-- Category Horizontal Tabs -->
+        <div class="category-tabs-container">
           <div class="category-tabs">
-            <button 
-              v-for="cat in categories" 
+            <button
+              v-for="cat in categories"
               :key="cat"
               class="category-btn"
               :class="{ 'active': selectedCategory === cat }"
@@ -153,32 +145,15 @@ function goToCart() {
 
     <!-- Menu List Section -->
     <div class="container menu-list-container">
-      <!-- Jika BELUM verifikasi token & nama: Tampilkan Gate Akses Awal -->
-      <div v-if="!store.customerSession.isVerified" class="menu-gate-card text-center">
-        <div class="gate-icon-wrap">
-          <AppIcon name="shield-check" :size="40" />
-        </div>
-        <h2 class="gate-title">Masukkan Token & Nama untuk Membuka Menu</h2>
-        <p class="gate-desc">
-          Untuk mulai memilih hidangan kopi dan sandwich di SIKopi, silakan masukkan Nama Anda dan Token 3 Digit yang diberikan oleh kasir di meja kasir.
-        </p>
-        <button type="button" class="btn-gate-open" @click="store.openAuthModal()">
-          <AppIcon name="user" :size="18" />
-          <span>Masukkan Nama & </span>
-        </button>
+      <!-- Result stats -->
+      <div class="results-meta">
+        <span class="meta-count">
+          Menampilkan {{ filteredItems.length }} menu
+        </span>
+        <span v-if="selectedCategory !== 'Semua'" class="meta-filter">
+          Kategori: {{ selectedCategory }}
+        </span>
       </div>
-
-      <!-- Jika SUDAH diverifikasi: Tampilkan Menu Grid Lengkap -->
-      <template v-else>
-        <!-- Result stats -->
-        <div class="results-meta">
-          <span class="meta-count">
-            Menampilkan {{ filteredItems.length }} menu
-          </span>
-          <span v-if="selectedCategory !== 'Semua'" class="meta-filter">
-            Kategori: {{ selectedCategory }}
-          </span>
-        </div>
 
         <!-- Empty State -->
         <div v-if="filteredItems.length === 0" class="empty-state">
@@ -250,7 +225,6 @@ function goToCart() {
             </div>
           </div>
         </div>
-      </template>
     </div>
 
     <!-- Sticky Floating Order Banner when items in cart -->

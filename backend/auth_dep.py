@@ -7,12 +7,16 @@ di tabel admin_sessions -> frontend mengirim token asli sebagai
 - Token asli tidak pernah disimpan, hanya hash-nya (bocor DB != bocor sesi).
 - Expiry 7 hari; logout menghapus baris sesi. Bersih-bersih expired oportunistik
   setiap login.
+
+Modul ini juga pemilik rate limiter in-memory yang dipakai bersama oleh login
+admin dan pembacaan detail pesanan publik.
 """
 
 import hashlib
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from database import get_db
@@ -20,6 +24,37 @@ from models import AdminSession
 
 _bearer = HTTPBearer(auto_error=False)
 SESSION_DAYS = 7
+
+# Rate limit in-memory per proses (cukup untuk 1 instance kasir).
+# Login: maks 15x gagal per akun / 5 menit, 60x per IP (vite proxy membuat
+# semua dev terlihat dari 127.0.0.1 -> kunci per akun mencegah satu pelaku
+# mengunci admin yang sah).
+# Detail pesanan: reader publik berbasis kode, batasi 60x/IP per 5 menit.
+FAILS: dict[str, list[float]] = {}
+WINDOW_SEC = 300
+
+
+def client_ip(request: Request) -> str:
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if fwd:
+        return fwd
+    return request.client.host if request.client else "unknown"
+
+
+def prune_fails(key: str) -> int:
+    """Buang entri di luar jendela waktu, return jumlah Percobaan terkini."""
+    now = time.monotonic()
+    for k in (key,):
+        FAILS[k] = [t for t in FAILS.get(k, []) if now - t < WINDOW_SEC]
+    return len(FAILS[key])
+
+
+def record_fail(key: str) -> None:
+    FAILS.setdefault(key, []).append(time.monotonic())
+
+
+def clear_fails(key: str) -> None:
+    FAILS.pop(key, None)
 
 
 def _utcnow_naive() -> datetime:

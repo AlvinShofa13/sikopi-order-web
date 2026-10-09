@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/services/api'
+import { compressImage } from '@/utils/imageUpload'
 
 /**
  * Dinamis memperbarui ikon tab browser (favicon) sesuai konfigurasi admin SIKopi
@@ -32,7 +33,7 @@ export function updateBrowserFavicon(icon) {
   // 3. Preset Kilau / Sparkles
   if (icon === 'sparkles') {
     link.type = 'image/svg+xml'
-    link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232C4A3E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z'/></svg>"
+    link.href = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232C4A3E' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='m12 3-1.9 5.8a1 1 0 0 1-1.3 1.3L3 12l5.8 1.9a1 1 0 0 1 1.3 1.3L12 21l1.9-5.8a1 1 0 0 1 1.3-1.3L21 12l-5.8-1.9a1 1 0 0 1-1.3-1.3Z'/></svg>"
     return
   }
 
@@ -55,16 +56,24 @@ export function updateBrowserFavicon(icon) {
   link.href = icon
 }
 
+// Alfabet kode transaksi: angka + huruf besar tanpa karakter ambigu (I/L/O/U),
+// harus sama persis dengan routers/orders.py di backend.
+const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+export function generateOrderCode() {
+  const chars = Array.from({ length: 8 }, () =>
+    CODE_ALPHABET.charAt(Math.floor(Math.random() * CODE_ALPHABET.length))
+  )
+  return `SK-${chars.join('')}`
+}
+
 export const useOrderStore = defineStore('order', () => {
   // Menu selalu dari backend FastAPI (tampilkan skeleton selagi memuat).
   const menuItems = ref([])
 
-  // Load saved menu from localStorage if modified locally
-  // Menu items list — 100% Single Source of Truth directly from backend FastAPI database
   async function fetchMenuFromAPI() {
     const res = await api.menu.getAll()
     if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
-      menuItems.value = res.data.map(item => ({
+      menuItems.value = res.data.map((item) => ({
         id: item.id,
         name: item.name,
         category: item.category || 'Kopi Pilihan',
@@ -77,19 +86,17 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   async function toggleMenuAvailability(menuId) {
-    const item = menuItems.value.find(m => m.id === menuId)
+    const item = menuItems.value.find((m) => m.id === menuId)
     if (item) {
       item.is_available = !item.is_available
     }
-    // Sync with FastAPI backend
     api.menu.toggle(menuId)
     broadcastChange('MENU_UPDATED', { menuId })
   }
 
   async function addMenuItem(newItemData) {
-    const id = newItemData.id || `menu-${Date.now()}`
     const item = {
-      id,
+      id: newItemData.id || `menu-${Date.now()}`,
       name: newItemData.name,
       category: newItemData.category || 'Kopi Pilihan',
       description: newItemData.description || '',
@@ -98,29 +105,26 @@ export const useOrderStore = defineStore('order', () => {
       is_available: newItemData.is_available !== false
     }
     menuItems.value.push(item)
-
-    // Sync with FastAPI
     api.menu.create(item)
-    broadcastChange('MENU_UPDATED', { menuId: id })
+    broadcastChange('MENU_UPDATED', { menuId: item.id })
     return item
   }
 
   async function updateMenuItem(id, updatedData) {
-    const idx = menuItems.value.findIndex(m => m.id === id)
+    const idx = menuItems.value.findIndex((m) => m.id === id)
     if (idx !== -1) {
       menuItems.value[idx] = {
         ...menuItems.value[idx],
         ...updatedData,
         price: Number(updatedData.price) || menuItems.value[idx].price
       }
-      // Sync with FastAPI
       api.menu.update(id, updatedData)
       broadcastChange('MENU_UPDATED', { menuId: id })
     }
   }
 
   async function deleteMenuItem(id) {
-    menuItems.value = menuItems.value.filter(m => m.id !== id)
+    menuItems.value = menuItems.value.filter((m) => m.id !== id)
     api.menu.delete(id)
     broadcastChange('MENU_UPDATED', { menuId: id })
   }
@@ -136,7 +140,6 @@ export const useOrderStore = defineStore('order', () => {
   // Cart state
   const cart = ref([])
 
-  // Load saved cart from localStorage if exists
   if (typeof localStorage !== 'undefined') {
     const savedCart = localStorage.getItem('hayati_cart')
     if (savedCart) {
@@ -154,26 +157,23 @@ export const useOrderStore = defineStore('order', () => {
     }
   }
 
-  // Cart calculations
-  const cartCount = computed(() => {
-    return cart.value.reduce((total, item) => total + item.quantity, 0)
-  })
+  const cartCount = computed(() => cart.value.reduce((total, item) => total + item.quantity, 0))
 
-  const subtotal = computed(() => {
-    return cart.value.reduce((total, item) => total + (item.price * item.quantity), 0)
-  })
+  const subtotal = computed(() =>
+    cart.value.reduce((total, item) => total + item.price * item.quantity, 0)
+  )
 
-  // Mode Pengujian: Biaya kemasan dan PB1 dibebaskan sehingga harga murni Rp 1 per porsi
+  // Mode Pengujian: Biaya kemasan dan PB1 dibebaskan sehingga harga murni akumulasi item.
+  // Verifikasi akhir tetap dihitung server dari harga menu di database.
   const ecoPackagingFee = computed(() => 0)
   const tax = computed(() => 0)
   const grandTotal = computed(() => subtotal.value)
 
-  // Cart Actions
   function addToCart(item, notes = '') {
     if (item.is_available === false) {
       return // item habis tidak bisa ditambahkan
     }
-    const existingIndex = cart.value.findIndex(i => i.id === item.id)
+    const existingIndex = cart.value.findIndex((i) => i.id === item.id)
     if (existingIndex > -1) {
       cart.value[existingIndex].quantity += 1
       if (notes) {
@@ -196,7 +196,7 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   function updateQuantity(id, change) {
-    const item = cart.value.find(i => i.id === id)
+    const item = cart.value.find((i) => i.id === id)
     if (!item) return
 
     const newQty = item.quantity + change
@@ -209,7 +209,7 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   function updateItemNotes(id, notes) {
-    const item = cart.value.find(i => i.id === id)
+    const item = cart.value.find((i) => i.id === id)
     if (item) {
       item.notes = notes
       persistCart()
@@ -217,7 +217,7 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   function removeFromCart(id) {
-    cart.value = cart.value.filter(i => i.id !== id)
+    cart.value = cart.value.filter((i) => i.id !== id)
     persistCart()
   }
 
@@ -226,53 +226,52 @@ export const useOrderStore = defineStore('order', () => {
     persistCart()
   }
 
-  // Order & History — 100% Single Source of Truth directly from backend FastAPI database
+  // Order & History — 100% Single Source of Truth langsung dari backend FastAPI
   const currentOrder = ref(null)
   const orderHistory = ref([])
 
-  // 3-digit Token generation utility (100 - 999)
-  function generate3DigitToken() {
-    return String(Math.floor(100 + Math.random() * 900))
-  }
+  // Identitas pelanggan: TANPA akun & tanpa token. Hanya nama + nomor WhatsApp,
+  // disimpan lokal agar form checkout tidak diisi ulang. Status pesanan dibaca
+  // lewat kode transaksi, bukan lewat login.
+  const customer = ref({ name: '', phone: '' })
 
-  // Used / Burned tokens mapping (reactive state; keys = token)
-  const usedTokensMap = ref({})
-
-  function markTokenAsUsed(token, orderId = null, customerName = 'Pelanggan') {
-    if (!token) return
-    const clean = String(token).trim()
-    usedTokensMap.value[clean] = {
-      orderId: orderId || null,
-      customerName: customerName || 'Pelanggan',
-      burnedAt: new Date().toISOString()
+  if (typeof localStorage !== 'undefined') {
+    customer.value = {
+      name: localStorage.getItem('sikopi_cust_name') || '',
+      phone: localStorage.getItem('sikopi_cust_phone') || ''
     }
   }
 
-  function isTokenUsed(token) {
-    if (!token) return false
-    return Boolean(usedTokensMap.value[String(token).trim()])
+  function setCustomer({ name, phone }) {
+    customer.value = {
+      name: (name || '').trim(),
+      phone: (phone || '').trim()
+    }
+    if (typeof localStorage !== 'undefined') {
+      if (customer.value.name) localStorage.setItem('sikopi_cust_name', customer.value.name)
+      else localStorage.removeItem('sikopi_cust_name')
+      if (customer.value.phone) localStorage.setItem('sikopi_cust_phone', customer.value.phone)
+      else localStorage.removeItem('sikopi_cust_phone')
+    }
   }
 
-  // Active 3-digit Token state - always initialize with a random valid 3-digit token
-  const activeToken = ref(generate3DigitToken())
-  const tokenGeneratedAt = ref(new Date().toISOString())
-
-  // Customer Session state
-  const customerSession = ref({
-    name: '',
-    token: '',
-    isVerified: false
-  })
-
-  // Global Auth Modal state
-  const authModalOpen = ref(false)
-
-  function openAuthModal() {
-    authModalOpen.value = true
+  // Kode transaksi dibuat di client agar nama file bukti bayar sudah terikat ke
+  // pesanan sejak sebelum order dikirim. Backend memvalidasi format & keunikan.
+  const orderCode = ref('')
+  function ensureOrderCode() {
+    if (!orderCode.value) orderCode.value = generateOrderCode()
+    return orderCode.value
   }
 
-  function closeAuthModal() {
-    authModalOpen.value = false
+  /** Kompres + unggah bukti pembayaran. Return URL dari backend. */
+  async function uploadPaymentProof(file) {
+    const code = ensureOrderCode()
+    const compressed = await compressImage(file)
+    const res = await api.uploads.proof(code, compressed)
+    if (!res.ok) {
+      throw new Error(res.error || 'Gagal mengunggah bukti pembayaran.')
+    }
+    return res.data.url
   }
 
   // Dynamic Branding (Icon & Name)
@@ -281,6 +280,20 @@ export const useOrderStore = defineStore('order', () => {
 
   const brandIcon = ref(defaultBrandIcon)
   const brandName = ref(defaultBrandName)
+  const adminWhatsapp = ref('')
+
+  // Satu-satunya mode operasional yang aktif (saling eksklusif).
+  // Customer tidak memilih mode — channel pesanan selalu mengikuti ini.
+  const activeMode = ref('pos')
+  const activeBatch = ref(null)
+
+  const isPreorder = computed(() => activeMode.value === 'preorder')
+  const isPreorderOpen = computed(() => isPreorder.value && !!activeBatch.value)
+
+  // Status gateway WhatsApp (khusus panel admin).
+  const waConnected = ref(false)
+  const waReachable = ref(false)
+  const waQr = ref(null)
 
   if (typeof localStorage !== 'undefined') {
     const savedIcon = localStorage.getItem('sikopi_brand_icon')
@@ -303,10 +316,6 @@ export const useOrderStore = defineStore('order', () => {
       syncChannel = new window.BroadcastChannel('sikopi_realtime_sync')
       syncChannel.onmessage = (event) => {
         const { type, payload } = event.data || {}
-        if (type === 'TOKEN_ROTATED' && payload?.token) {
-          activeToken.value = payload.token
-          tokenGeneratedAt.value = payload.time || new Date().toISOString()
-        }
         if (type === 'ORDER_CREATED') {
           refreshOrdersFromDB()
         }
@@ -328,23 +337,18 @@ export const useOrderStore = defineStore('order', () => {
             }
           }
         }
+        if (type === 'MODE_UPDATED') {
+          fetchPublicSettings()
+        }
         if (type === 'ORDER_STATUS_UPDATED' && payload?.orderId) {
-          const ord = orderHistory.value.find(o => o.orderId === payload.orderId)
-          if (ord) {
+          const patch = (ord) => {
             if (payload.orderStatus) ord.orderStatus = payload.orderStatus
             if (payload.payment) ord.payment = { ...ord.payment, ...payload.payment }
-            if (payload.is_paid !== undefined && ord.payment) {
-              ord.payment.paid = payload.is_paid
-              if (payload.is_paid) ord.payment.status = 'Lunas'
-            }
           }
+          const listed = orderHistory.value.find((o) => o.orderId === payload.orderId)
+          if (listed) patch(listed)
           if (currentOrder.value && currentOrder.value.orderId === payload.orderId) {
-            if (payload.orderStatus) currentOrder.value.orderStatus = payload.orderStatus
-            if (payload.payment) currentOrder.value.payment = { ...currentOrder.value.payment, ...payload.payment }
-            if (payload.is_paid !== undefined && currentOrder.value.payment) {
-              currentOrder.value.payment.paid = payload.is_paid
-              if (payload.is_paid) currentOrder.value.payment.status = 'Lunas'
-            }
+            patch(currentOrder.value)
           }
         }
       }
@@ -367,27 +371,62 @@ export const useOrderStore = defineStore('order', () => {
     broadcastChange('ORDER_STATUS_UPDATED', { orderId, ...patchData })
   }
 
-  async function fetchBrandingSettings() {
-    try {
-      const res = await api.settings.getBranding()
-      if (res.ok && res.data) {
-        if (res.data.brand_icon) {
-          brandIcon.value = res.data.brand_icon
-          updateBrowserFavicon(res.data.brand_icon)
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('sikopi_brand_icon', res.data.brand_icon)
-          }
-        }
-        if (res.data.brand_name) {
-          brandName.value = res.data.brand_name
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('sikopi_brand_name', res.data.brand_name)
-          }
-        }
+  /**
+   * Satu panggilan mengambil branding + mode + batch aktif + nomor WA admin.
+   * Dipakai halaman pelanggan (baca) dan dipanggil ulang setelah admin mengubah
+   * mode lewat tab lain.
+   */
+  async function fetchPublicSettings() {
+    const res = await api.settings.getPublic()
+    if (!res.ok || !res.data) return res
+    const d = res.data
+    if (d.brand_icon) {
+      brandIcon.value = d.brand_icon
+      updateBrowserFavicon(d.brand_icon)
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('sikopi_brand_icon', d.brand_icon)
       }
-    } catch {
-      // Fallback to local
     }
+    if (d.brand_name) {
+      brandName.value = d.brand_name
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('sikopi_brand_name', d.brand_name)
+      }
+    }
+    adminWhatsapp.value = d.admin_whatsapp || ''
+    if (d.mode === 'preorder' || d.mode === 'pos') {
+      activeMode.value = d.mode
+    } else {
+      // Kompatibilitas respons lama {pos, preorder}: salah satu
+      if (d.preorder === true && d.pos !== true) activeMode.value = 'preorder'
+      else activeMode.value = 'pos'
+    }
+    activeBatch.value = d.batch || null
+    return res
+  }
+
+  async function switchMode(mode) {
+    const res = await api.preorder.switchMode(mode)
+    if (res.ok && res.data?.mode) {
+      activeMode.value = res.data.mode
+      activeBatch.value = res.data.batch || null
+      broadcastChange('MODE_UPDATED', { mode: activeMode.value })
+    }
+    return res
+  }
+
+  async function fetchWaStatus() {
+    const res = await api.wa.getStatus()
+    if (res.ok && res.data) {
+      waConnected.value = !!res.data.connected
+      waReachable.value = res.data.reachable !== false
+      waQr.value = res.data.qr || null
+    } else {
+      waConnected.value = false
+      waReachable.value = false
+      waQr.value = null
+    }
+    return res
   }
 
   async function updateBrandingSettings({ icon, name } = {}) {
@@ -417,293 +456,70 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   async function resetBrandingToDefault() {
-    return await updateBrandingSettings({
-      icon: defaultBrandIcon,
-      name: defaultBrandName
-    })
+    return await updateBrandingSettings({ icon: defaultBrandIcon, name: defaultBrandName })
   }
 
-  function generateNewToken() {
-    let newToken = generate3DigitToken()
-    let attempts = 0
-    while (usedTokensMap.value[newToken] && attempts < 100) {
-      newToken = generate3DigitToken()
-      attempts++
-    }
-    activeToken.value = newToken
-    tokenGeneratedAt.value = new Date().toISOString()
-
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sikopi_active_token', activeToken.value)
-      localStorage.setItem('sikopi_token_time', tokenGeneratedAt.value)
-    }
-    broadcastChange('TOKEN_ROTATED', { token: activeToken.value, time: tokenGeneratedAt.value })
-
-    // Sync with FastAPI in background
-    api.tokens.generate().catch(() => {})
-
-    return activeToken.value
-  }
-
-  async function fetchActiveToken() {
-    const res = await api.tokens.getActive()
-    if (res.ok && res.data?.activeToken) {
-      activeToken.value = res.data.activeToken
-      tokenGeneratedAt.value = res.data.time || new Date().toISOString()
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('sikopi_active_token', activeToken.value)
-      }
-    }
-  }
-
-  // Initialize active token & customer session from localStorage if saved
-  if (typeof localStorage !== 'undefined') {
-    const savedToken = localStorage.getItem('sikopi_active_token')
-    if (savedToken && !usedTokensMap.value[savedToken]) {
-      activeToken.value = savedToken
-      tokenGeneratedAt.value = localStorage.getItem('sikopi_token_time') || new Date().toISOString()
-    }
-
-    const savedName = localStorage.getItem('sikopi_cust_name')
-    const savedCustToken = localStorage.getItem('sikopi_cust_token')
-    const isVerified = localStorage.getItem('sikopi_cust_verified') === 'true'
-
-    if (savedName && isVerified && savedCustToken && !usedTokensMap.value[savedCustToken]) {
-      customerSession.value = {
-        name: savedName,
-        token: savedCustToken,
-        isVerified: true
-      }
-    } else if (savedCustToken && usedTokensMap.value[savedCustToken]) {
-      clearCustomerSession()
-    }
-  }
-
-  // Verify and Set Customer: immediate check + background sync
-  function verifyAndSetCustomer(name, token) {
-    const cleanName = (name || '').trim()
-    const cleanToken = (token || '').trim()
-
-    if (!cleanName) {
-      return { success: false, message: 'Silakan masukkan nama lengkap atau panggilan Anda.' }
-    }
-    if (!cleanToken) {
-      return { success: false, message: 'Silakan masukkan token 3 digit.' }
-    }
-
-    // 1. Check local orderHistory
-    const existingOrder = orderHistory.value.find(o => o.customer?.token === cleanToken)
-    if (existingOrder) {
-      return {
-        success: false,
-        isCompletedOrder: true,
-        orderId: existingOrder.orderId,
-        message: `Token "${cleanToken}" sudah menyelesaikan pesanan #${existingOrder.orderId}. Mengalihkan ke rincian pesanan Anda...`
-      }
-    }
-
-    // 2. Check local burned tokens
-    const burnedInfo = usedTokensMap.value[cleanToken]
-    if (burnedInfo) {
-      const linkedOrderId = burnedInfo?.orderId || null
-      return {
-        success: false,
-        isCompletedOrder: Boolean(linkedOrderId),
-        orderId: linkedOrderId,
-        message: linkedOrderId
-          ? `Token "${cleanToken}" sudah menyelesaikan pesanan #${linkedOrderId}. Mengalihkan ke rincian pesanan Anda...`
-          : `Token "${cleanToken}" sudah digunakan dan hangus. Silakan minta token baru ke kasir.`
-      }
-    }
-
-    if (cleanToken !== activeToken.value) {
-      return {
-        success: false,
-        message: `Token "${cleanToken}" tidak cocok. Silakan minta token 3 digit aktif ke kasir/admin.`
-      }
-    }
-
-    customerSession.value = {
-      name: cleanName,
-      token: cleanToken,
-      isVerified: true
-    }
-
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('sikopi_cust_name', cleanName)
-      localStorage.setItem('sikopi_cust_token', cleanToken)
-      localStorage.setItem('sikopi_cust_verified', 'true')
-    }
-
-    // Immediately rotate new token for next customer at cashier
-    generateNewToken()
-
-    // Server otoritatif: adopsi token hasil rotasi server agar client
-    // tidak divergen (server memutar token setiap verify sukses).
-    api.tokens.verify(cleanName, cleanToken).then((res) => {
-      const srv = res && res.ok && res.data && res.data.newToken ? String(res.data.newToken) : ''
-      if (srv && srv !== activeToken.value) {
-        activeToken.value = srv
-        tokenGeneratedAt.value = new Date().toISOString()
-        if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('sikopi_active_token', activeToken.value)
-          localStorage.setItem('sikopi_token_time', tokenGeneratedAt.value)
-        }
-        broadcastChange('TOKEN_ROTATED', { token: activeToken.value, time: tokenGeneratedAt.value })
-      }
-    }).catch(() => {})
-
-    return { success: true }
-  }
-
-  // Verifikasi online dengan server backend: memeriksa pesanan selesai & token aktif
-  async function verifyCustomerTokenOnline(name, token) {
-    const cleanName = (name || '').trim()
-    const cleanToken = (token || '').trim()
-
-    // Cek synchronous lokal dulu
-    const localRes = verifyAndSetCustomer(cleanName, cleanToken)
-    if (localRes.success || localRes.isCompletedOrder) {
-      return localRes
-    }
-
-    // Jika tidak cocok secara lokal, periksa langsung ke server backend database
-    try {
-      const res = await api.tokens.verify(cleanName, cleanToken)
-      if (res.ok && res.data) {
-        if (res.data.isCompletedOrder && res.data.orderId) {
-          return {
-            success: false,
-            isCompletedOrder: true,
-            orderId: res.data.orderId,
-            message: res.data.message || `Token "${cleanToken}" sudah menyelesaikan pesanan #${res.data.orderId}. Mengalihkan ke rincian pesanan Anda...`
-          }
-        }
-        if (res.data.success) {
-          customerSession.value = {
-            name: cleanName,
-            token: cleanToken,
-            isVerified: true
-          }
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('sikopi_cust_name', cleanName)
-            localStorage.setItem('sikopi_cust_token', cleanToken)
-            localStorage.setItem('sikopi_cust_verified', 'true')
-          }
-          if (res.data.newToken) {
-            activeToken.value = String(res.data.newToken)
-            tokenGeneratedAt.value = new Date().toISOString()
-            if (typeof localStorage !== 'undefined') {
-              localStorage.setItem('sikopi_active_token', activeToken.value)
-              localStorage.setItem('sikopi_token_time', tokenGeneratedAt.value)
-            }
-            broadcastChange('TOKEN_ROTATED', { token: activeToken.value, time: tokenGeneratedAt.value })
-          }
-          return { success: true }
-        } else {
-          return {
-            success: false,
-            isCompletedOrder: res.data.isCompletedOrder || false,
-            orderId: res.data.orderId || null,
-            message: res.data.message || localRes.message
-          }
-        }
-      }
-    } catch {
-      // offline fallback
-    }
-
-    return localRes
-  }
-
-  function clearCustomerSession() {
-    customerSession.value = {
-      name: '',
-      token: '',
-      isVerified: false
-    }
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('sikopi_cust_name')
-      localStorage.removeItem('sikopi_cust_token')
-      localStorage.removeItem('sikopi_cust_verified')
-    }
-  }
-
-  // Create an order (server authoritative: gagal simpan = gagal total,
-  // cart & sesi utuh agar pelanggan bisa coba lagi)
-  async function placeOrder(customerData, paymentDetails) {
-    const randomSeq = Math.floor(10000 + Math.random() * 90000)
-    const orderNumber = `HYT-2026-${randomSeq}`
-    const orderDate = new Date().toISOString()
-
-    const isQris = paymentDetails.method === 'qris'
-    const resolvedCustomerName = customerData?.name?.trim() || customerSession.value.name?.trim() || 'Pelanggan'
-    const tokenUsed = customerSession.value.token || activeToken.value
-
-    const orderPayload = {
-      orderId: orderNumber,
-      createdAt: orderDate,
+  /**
+   * Catat pesanan. Channel selalu mengikuti mode aktif global (customer tidak
+   * memilih). Server adalah sumber kebenaran: harga, total, kode transaksi,
+   * dan penomoran ulang dikirim balik dari backend sehingga struk digital selalu
+   * cocok dengan yang tercatat. Setelah tercatat, server otomatis mengirim
+   * notifikasi WhatsApp ke nomor customer.
+   * @param {object} customerData { name, phone, specialRequest }
+   * @param {object} payment { method: 'transfer'|'cash', batchId, paymentProof }
+   * @returns {Promise<string>} kode transaksi
+   */
+  async function placeOrder(customerData, payment) {
+    const payload = {
+      orderId: ensureOrderCode(),
+      channel: activeMode.value,
+      batchId: payment.batchId ?? activeBatch.value?.id ?? null,
+      paymentProof: payment.paymentProof || null,
       customer: {
-        name: resolvedCustomerName,
-        phone: customerData?.phone || '-',
-        token: tokenUsed,
-        orderType: customerData?.orderType || 'Makan di Tempat',
-        tableOrAddress: customerData?.tableOrAddress || 'Meja Reguler',
+        name: (customerData?.name || customer.value.name || '').trim(),
+        phone: (customerData?.phone || customer.value.phone || '').trim(),
         specialRequest: customerData?.specialRequest || '-'
       },
       payment: {
-        method: paymentDetails.method,
-        label: paymentDetails.label || (isQris ? 'QRIS' : 'Bayar di Kasir (Tunai / EDC)'),
-        reference: paymentDetails.reference || `REF-${Math.floor(100000 + Math.random() * 900000)}`,
-        status: 'Menunggu Pembayaran'
+        method: payment.method || 'transfer',
+        label: payment.method === 'cash' ? 'Bayar di Kasir (Tunai / EDC)' : 'Transfer QRIS + Bukti'
       },
-      items: JSON.parse(JSON.stringify(cart.value)),
-      breakdown: {
-        subtotal: subtotal.value,
-        ecoFee: ecoPackagingFee.value,
-        tax: tax.value,
-        total: grandTotal.value
-      },
-      orderStatus: 'Diterima & Disiapkan'
+      items: cart.value.map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+        notes: item.notes || ''
+      }))
+      // breakdown sengaja tidak dikirim: server menghitung total dari harga menu.
     }
 
-    // Simpan ke backend dulu; 409 = token sudah dipakai (double-burn ditolak)
-    if (import.meta.env.MODE !== 'test') {
-      const res = await api.orders.create({
-        customer: orderPayload.customer,
-        payment: orderPayload.payment,
-        items: orderPayload.items,
-        breakdown: orderPayload.breakdown
-      })
-      if (!res.ok) throw new Error(res.error || 'Gagal menyimpan pesanan ke server.')
-    }
+    const res = await api.orders.create(payload)
+    if (!res.ok || !res.data) throw new Error(res.error || 'Gagal menyimpan pesanan ke server.')
 
-    currentOrder.value = orderPayload
-    orderHistory.value.unshift(orderPayload)
+    const saved = res.data
+    currentOrder.value = saved
+    orderHistory.value = [saved, ...orderHistory.value.filter((o) => o.orderId !== saved.orderId)]
 
-    // Burn token used
-    if (tokenUsed) {
-      markTokenAsUsed(tokenUsed, orderNumber, resolvedCustomerName)
-    }
+    // Sesi customer langsung hilang setelah pesanan tercatat: nama + nomor WA
+    // tidak disimpan (localStorage ikut terhapus via setCustomer).
+    setCustomer({ name: '', phone: '' })
 
-    broadcastChange('ORDER_CREATED', { orderId: orderNumber })
-    generateNewToken()
-    clearCustomerSession()
+    broadcastChange('ORDER_CREATED', { orderId: saved.orderId })
+    orderCode.value = ''
     clearCart()
 
-    return orderNumber
+    return saved.orderId
   }
-
 
   function getOrderById(id) {
     if (currentOrder.value && currentOrder.value.orderId === id) {
       return currentOrder.value
     }
-    return orderHistory.value.find(o => o.orderId === id) || null
+    return orderHistory.value.find((o) => o.orderId === id) || null
   }
 
   async function refreshOrdersFromDB() {
-    // Fetch directly from FastAPI backend database
     const apiRes = await api.orders.getAll()
     if (apiRes.ok && Array.isArray(apiRes.data)) {
       orderHistory.value = apiRes.data
@@ -712,34 +528,23 @@ export const useOrderStore = defineStore('order', () => {
 
   function handleIncomingOrder(newOrder) {
     if (!newOrder || !newOrder.orderId) return false
-    const idx = orderHistory.value.findIndex(o => o.orderId === newOrder.orderId)
+    const idx = orderHistory.value.findIndex((o) => o.orderId === newOrder.orderId)
     if (idx === -1) {
       orderHistory.value.unshift(newOrder)
       return true
-    } else {
-      orderHistory.value[idx] = newOrder
-      return false
     }
-  }
-
-  async function fetchBurnedTokens() {
-    // Fetch burned tokens from FastAPI backend database
-    const res = await api.tokens.getBurned()
-    if (res.ok && res.data) {
-      usedTokensMap.value = { ...usedTokensMap.value, ...res.data }
-    }
+    orderHistory.value[idx] = newOrder
+    return false
   }
 
   // Initial loads on store setup
   fetchMenuFromAPI()
-  fetchActiveToken()
-  fetchBurnedTokens()
-  fetchBrandingSettings()
+  fetchPublicSettings()
 
   return {
     brandIcon,
     brandName,
-    fetchBrandingSettings,
+    adminWhatsapp,
     updateBrandingSettings,
     resetBrandingToDefault,
     updateBrowserFavicon,
@@ -753,20 +558,22 @@ export const useOrderStore = defineStore('order', () => {
     grandTotal,
     currentOrder,
     orderHistory,
-    activeToken,
-    tokenGeneratedAt,
-    usedTokensMap,
-    markTokenAsUsed,
-    isTokenUsed,
-    customerSession,
-    authModalOpen,
-    openAuthModal,
-    closeAuthModal,
-    generateNewToken,
-    fetchActiveToken,
-    verifyAndSetCustomer,
-    verifyCustomerTokenOnline,
-    clearCustomerSession,
+    customer,
+    setCustomer,
+    orderCode,
+    ensureOrderCode,
+    generateOrderCode,
+    uploadPaymentProof,
+    activeMode,
+    isPreorder,
+    activeBatch,
+    isPreorderOpen,
+    fetchPublicSettings,
+    switchMode,
+    waConnected,
+    waReachable,
+    waQr,
+    fetchWaStatus,
     refreshOrdersFromDB,
     fetchMenuFromAPI,
     toggleMenuAvailability,
@@ -774,7 +581,6 @@ export const useOrderStore = defineStore('order', () => {
     updateMenuItem,
     deleteMenuItem,
     uploadMenuImage,
-    fetchBurnedTokens,
     addToCart,
     updateQuantity,
     updateItemNotes,

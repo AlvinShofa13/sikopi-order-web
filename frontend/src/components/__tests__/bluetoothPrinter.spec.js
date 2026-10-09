@@ -88,14 +88,24 @@ describe('bluetoothPrinter utility', () => {
       expect(text).toContain('SUDAH LUNAS')
     })
 
-    it('supports custom dynamic brand name and token in kitchen receipt', () => {
-      const orderWithToken = {
+    it('supports custom dynamic brand name and WhatsApp number in kitchen receipt', () => {
+      const orderWithWa = {
         ...sampleOrder,
-        customer: { ...sampleOrder.customer, token: '742' }
+        customer: { ...sampleOrder.customer, phone: '6281234567890' }
       }
-      const text = generateKitchenReceiptText(orderWithToken, 32, 'Kopi Nusantara')
+      const text = generateKitchenReceiptText(orderWithWa, 32, 'Kopi Nusantara')
       expect(text).toContain('Kopi Nusantara')
-      expect(text).toContain('#742')
+      expect(text).toContain('6281234567890')
+    })
+
+    it('prints the Open PO batch name on the customer receipt', () => {
+      const preorder = {
+        ...sampleOrder,
+        channel: 'preorder',
+        batch: { id: 3, name: 'Batch 3' }
+      }
+      const text = generateCustomerReceiptText(preorder, 32)
+      expect(text).toContain('Batch 3')
     })
   })
 
@@ -111,14 +121,14 @@ describe('bluetoothPrinter utility', () => {
       expect(text).toContain('LUNAS (SUDAH DIBAYAR)')
     })
 
-    it('supports custom dynamic brand name and token in customer receipt', () => {
-      const orderWithToken = {
+    it('supports custom dynamic brand name and WhatsApp number in customer receipt', () => {
+      const orderWithWa = {
         ...sampleOrder,
-        customer: { ...sampleOrder.customer, token: '742' }
+        customer: { ...sampleOrder.customer, phone: '6281234567890' }
       }
-      const text = generateCustomerReceiptText(orderWithToken, 32, 'Kopi Nusantara')
+      const text = generateCustomerReceiptText(orderWithWa, 32, 'Kopi Nusantara')
       expect(text).toContain('Kopi Nusantara')
-      expect(text).toContain('#742')
+      expect(text).toContain('6281234567890')
     })
   })
 

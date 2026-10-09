@@ -32,16 +32,23 @@ class Order(Base):
     # Customer Details
     customer_name = Column(String(150), nullable=False)
     customer_phone = Column(String(50), default="-")
+    # Diwarisi dari sistem token 3-digit (dihapus). Tidak lagi ditulis.
     customer_token = Column(String(10), nullable=True, index=True)
-    order_type = Column(String(50), default="Makan di Tempat")
-    table_or_address = Column(String(100), default="Meja Reguler")
+    # Diwarisi dari versi lama (input dihapus). Tidak lagi ditulis; "-" untuk pesanan baru.
+    order_type = Column(String(50), default="-")
+    table_or_address = Column(String(100), default="-")
     special_request = Column(Text, default="-")
 
+    # Channel: 'pos' (on-site / hari jualan) atau 'preorder' (Open PO per batch)
+    channel = Column(String(20), nullable=False, default="pos", index=True)
+    batch_id = Column(Integer, ForeignKey("preorder_batches.id"), nullable=True, index=True)
+
     # Payment Details
-    payment_method = Column(String(50), nullable=False, default="qris")  # 'qris' or 'cash'
+    payment_method = Column(String(50), nullable=False, default="qris")  # 'transfer' or 'cash'
     payment_label = Column(String(100), default="QRIS")
     payment_reference = Column(String(100), nullable=True)
     payment_status = Column(String(50), default="Menunggu Pembayaran")
+    payment_proof = Column(Text, nullable=True)
     is_paid = Column(Boolean, default=False, nullable=False)
     cash_received = Column(Float, default=0.0)
     cash_change = Column(Float, default=0.0)
@@ -57,6 +64,7 @@ class Order(Base):
 
     # Relations
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    batch = relationship("PreorderBatch", back_populates="items")
 
 
 class OrderItem(Base):
@@ -74,16 +82,19 @@ class OrderItem(Base):
     order = relationship("Order", back_populates="items")
 
 
-class TokenRecord(Base):
-    __tablename__ = "tokens"
+class PreorderBatch(Base):
+    """Batch Open PO. Pada satu waktu hanya boleh ada satu batch berstatus 'open'."""
+
+    __tablename__ = "preorder_batches"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    token = Column(String(10), unique=True, index=True, nullable=False)
-    is_used = Column(Boolean, default=False, nullable=False)
-    customer_name = Column(String(150), nullable=True)
-    order_id = Column(String(50), nullable=True)
-    burned_at = Column(DateTime, nullable=True)
+    name = Column(String(150), nullable=False)
+    order_deadline = Column(DateTime, nullable=True)
+    pickup_date = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False, default="open", index=True)
     created_at = Column(DateTime, default=utc_now)
+
+    items = relationship("Order", back_populates="batch")
 
 
 class AppSetting(Base):

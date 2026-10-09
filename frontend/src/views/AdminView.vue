@@ -6,6 +6,7 @@ import { useAdminStore } from '@/stores/adminStore'
 import AppIcon from '@/components/icons/AppIcon.vue'
 import { api } from '@/services/api'
 import { formatRupiah, isCustomImage, createToast } from '@/utils/format'
+import { orderStatusText, waLink } from '@/utils/wa'
 import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl } from '@/utils/salesAnalytics'
 import { isBluetoothSupported, printReceiptViaBluetooth, getSavedPrinterName, forgetBluetoothPrinter } from '@/utils/bluetoothPrinter'
 import { generateDynamicQrisPayload, generateQrisDataUrl, getQrisImageUrl } from '@/utils/qris'
@@ -128,13 +129,6 @@ function connectWebSocket() {
           if (selectedOrder.value && selectedOrder.value.orderId === data.order.orderId) {
             selectedOrder.value = data.order
           }
-        } else if (data.event === 'TOKEN_ROTATED' && data.activeToken) {
-          store.activeToken = data.activeToken
-          if (typeof localStorage !== 'undefined') {
-            localStorage.setItem('sikopi_active_token', data.activeToken)
-            if (data.time) localStorage.setItem('sikopi_token_time', data.time)
-          }
-          showToast(`Token kasir baru: ${data.activeToken} (ada verifikasi pelanggan)`, 'success')
         }
       } catch {
         // ignore non-json messages
@@ -193,21 +187,24 @@ onMounted(() => {
   savedPrinterName.value = getSavedPrinterName()
   if (adminStore.isAuthenticated) {
     store.fetchMenuFromAPI()
-    store.fetchActiveToken()
-    store.fetchBurnedTokens()
+    store.refreshOrdersFromDB()
+    fetchModeSettings()
+    refreshWaStatus()
     startRealtimeSync()
   }
 })
 
 onUnmounted(() => {
   stopRealtimeSync()
+  if (waPollTimer.value) {
+    clearInterval(waPollTimer.value)
+    waPollTimer.value = null
+  }
 })
 
 // Data Computeds
-const activeToken = computed(() => store.activeToken)
 const orderHistory = computed(() => store.orderHistory)
 const menuItems = computed(() => store.menuItems)
-const usedTokensMap = computed(() => store.usedTokensMap || {})
 
 // ---- Sales analytics (server stats preferred, local fallback) ----
 // Visual murni CSS (rank bars + legend); tanpa chart lib.
@@ -285,7 +282,8 @@ const filteredOrders = computed(() => {
   return orderHistory.value.filter(ord => {
     return ord.orderId.toLowerCase().includes(query) ||
       (ord.customer?.name || '').toLowerCase().includes(query) ||
-      (ord.customer?.token || '').includes(query) ||
+      (ord.customer?.phone || '').includes(query) ||
+      (ord.batch?.name || '').toLowerCase().includes(query) ||
       (ord.payment?.label || '').toLowerCase().includes(query)
   })
 })
@@ -303,39 +301,174 @@ async function handleLogin() {
   }
 
   store.fetchMenuFromAPI()
-  store.fetchActiveToken()
+  store.refreshOrdersFromDB()
+  fetchModeSettings()
+  refreshWaStatus()
   startRealtimeSync()
   showToast('Selamat datang di Panel Admin & Kasir SIKopi!')
 }
 
 function handleLogout() {
   stopRealtimeSync()
+  if (waPollTimer.value) {
+    clearInterval(waPollTimer.value)
+    waPollTimer.value = null
+  }
   adminStore.logout()
   showToast('Anda telah keluar dari sesi admin.')
 }
 
-async function handleGenerateNewToken() {
-  const newToken = await store.generateNewToken()
-  showToast(`Token 3 digit baru berhasil dibuat: ${newToken}`)
+// ---- Mode operasional (saling eksklusif) & batch Open PO ----
+const modeSaving = ref(false)
+const batchList = ref([])
+const batchForm = ref({ name: '', orderDeadline: '', pickupDate: '' })
+const isCreatingBatch = ref(false)
+
+async function fetchModeSettings() {
+  await store.fetchPublicSettings()
+  const res = await api.preorder.listBatches()
+  if (res.ok && Array.isArray(res.data)) batchList.value = res.data
 }
 
-function handleCopyToken() {
-  if (!activeToken.value) return
-  navigator.clipboard.writeText(activeToken.value)
-  copied.value = true
-  showToast(`Token ${activeToken.value} berhasil disalin`)
-  setTimeout(() => {
-    copied.value = false
-  }, 2000)
+async function switchMode(mode) {
+  if (store.activeMode === mode) return
+  modeSaving.value = true
+  const res = await store.switchMode(mode)
+  modeSaving.value = false
+  if (!res.ok) {
+    showToast(res.error || 'Gagal mengubah mode.', 'error')
+    return
+  }
+  showToast(`Mode pemesanan diganti ke ${mode === 'pos' ? 'On-site / Hari Jualan' : 'Open PO'}.`)
 }
 
-// State & Kalkulator Pembayaran Tunai (Cash di Kasir)
+// ---- Gateway WhatsApp (Baileys): status pairing ----
+const waPollTimer = ref(null)
+
+async function refreshWaStatus() {
+  await store.fetchWaStatus()
+  // Polling QR hanya selama belum terhubung & panel terbuka
+  if (!store.waConnected && !waPollTimer.value) {
+    waPollTimer.value = setInterval(() => {
+      if (store.waConnected && waPollTimer.value) {
+        clearInterval(waPollTimer.value)
+        waPollTimer.value = null
+        return
+      }
+      store.fetchWaStatus()
+    }, 5000)
+  }
+  if (store.waConnected && waPollTimer.value) {
+    clearInterval(waPollTimer.value)
+    waPollTimer.value = null
+  }
+}
+
+async function createBatch() {
+  if (!batchForm.value.name.trim()) {
+    showToast('Nama batch wajib diisi.', 'error')
+    return
+  }
+  isCreatingBatch.value = true
+  const res = await api.preorder.createBatch({
+    name: batchForm.value.name.trim(),
+    order_deadline: batchForm.value.orderDeadline ? new Date(batchForm.value.orderDeadline).toISOString() : null,
+    pickup_date: batchForm.value.pickupDate ? new Date(batchForm.value.pickupDate).toISOString() : null
+  })
+  isCreatingBatch.value = false
+  if (!res.ok) {
+    showToast(res.error || 'Gagal membuat batch.', 'error')
+    return
+  }
+  batchForm.value = { name: '', orderDeadline: '', pickupDate: '' }
+  await fetchModeSettings()
+  showToast('Batch Open PO baru dibuka. Customer otomatis masuk ke batch ini.')
+}
+
+async function closeBatch(batchId) {
+  if (!confirm('Tutup batch ini? Customer tidak bisa lagi memesan Open PO untuk batch tersebut.')) return
+  const res = await api.preorder.closeBatch(batchId)
+  if (!res.ok) {
+    showToast(res.error || 'Gagal menutup batch.', 'error')
+    return
+  }
+  await fetchModeSettings()
+  showToast('Batch ditutup.')
+}
+
+async function reopenBatch(batchId) {
+  const res = await api.preorder.reopenBatch(batchId)
+  if (!res.ok) {
+    showToast(res.error || 'Gagal membuka batch.', 'error')
+    return
+  }
+  await fetchModeSettings()
+  showToast('Batch dibuka kembali.')
+}
+
+function formatDateTimeShort(iso) {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// ---- Notifikasi WhatsApp ke customer ----
+// Satu klik membuka wa.me dengan pesan status sudah terisi; kasir menekan "Kirim".
+const WA_STATUS_OPTIONS = [
+  'Diterima & Disiapkan',
+  'Sedang Disiapkan',
+  'Siap Diambil',
+  'Selesai'
+]
+
+function sendWaStatus(order, status) {
+  if (!order?.customer?.phone) {
+    showToast('Nomor WhatsApp customer kosong pada pesanan ini.', 'error')
+    return
+  }
+  const url = waLink(order.customer.phone, orderStatusText(order, status, store.brandName))
+  if (!url) {
+    showToast('Nomor WhatsApp tidak valid.', 'error')
+    return
+  }
+  window.open(url, '_blank', 'noopener')
+  showToast(`WhatsApp dibuka untuk "${status}". Tekan Kirim di WhatsApp.`)
+}
+
+const isSendingReceipt = ref(false)
+
+// Kirim nota digital langsung via gateway — tanpa membuka wa.me.
+async function sendWaReceipt(order) {
+  if (!order || isSendingReceipt.value) return
+  isSendingReceipt.value = true
+  try {
+    const res = await api.wa.sendReceipt(order.orderId)
+    if (res.ok && res.data?.success) {
+      showToast(`Nota digital ${order.orderId} terkirim ke WhatsApp customer.`, 'success')
+    } else {
+      showToast(res.data?.message || res.error || 'Gagal mengirim nota digital.', 'error')
+    }
+  } catch (err) {
+    showToast(err.message || 'Gagal mengirim nota digital.', 'error')
+  } finally {
+    isSendingReceipt.value = false
+  }
+}
+
+// State Pembayaran di Kasir: tab Tunai / QRIS + Kalkulator Tunai
 const cashAmountReceived = ref(0)
 const isValidatingCash = ref(false)
+const cashPayTab = ref('tunai') // 'tunai' | 'qris'
 
 function openOrderDetail(order) {
   selectedOrder.value = order
   savedPrinterName.value = getSavedPrinterName()
+  cashPayTab.value = 'tunai'
   const total = Number(order.breakdown?.total || 0)
   const existingReceived = order.payment?.cashReceived ?? order.payment?.cash_received
   if (order.payment?.paid && existingReceived !== undefined && existingReceived > 0) {
@@ -540,6 +673,25 @@ async function markOrderAsPaid(order) {
     showToast(`Pesanan #${order.orderId} lunas. Struk bisa dicetak.`, 'success')
   } catch (err) {
     showToast(err.message || 'Gagal menandai lunas.', 'error')
+  }
+}
+
+// Kembalikan status lunas ke belum bayar (koreksi kasir — bisa diubah-ubah manual).
+async function revertPaidStatus(order) {
+  if (!order || !order.payment?.paid) return
+  if (!confirm(`Kembalikan pesanan #${order.orderId} ke "Menunggu Pembayaran"?`)) return
+  try {
+    const res = await api.orders.updateStatus(order.orderId, { is_paid: false })
+    if (!res.ok) throw new Error(res.error || 'Gagal menyimpan status.')
+    order.payment.paid = false
+    order.payment.status = 'Menunggu Pembayaran'
+    store.broadcastOrderStatusUpdate(order.orderId, {
+      is_paid: false,
+      payment: { ...order.payment, paid: false, status: 'Menunggu Pembayaran' }
+    })
+    showToast(`Pesanan #${order.orderId} dikembalikan ke belum bayar.`, 'success')
+  } catch (err) {
+    showToast(err.message || 'Gagal mengembalikan status.', 'error')
   }
 }
 
@@ -921,17 +1073,18 @@ async function handleResetBranding() {
               <span>Kelola Menu</span>
               <span class="tab-badge">{{ menuItems.length }}</span>
             </button>
-            <button 
-              type="button" 
-              class="nav-tab-btn" 
-              :class="{ active: activeTab === 'tokens' }"
-              @click="activeTab = 'tokens'"
+            <button
+              type="button"
+              class="nav-tab-btn"
+              :class="{ active: activeTab === 'mode' }"
+              @click="activeTab = 'mode'"
             >
-              <span>Token Hangus</span>
+              <span>Mode & Batch</span>
+              <span class="tab-badge" v-if="!store.waConnected">!</span>
             </button>
-            <button 
-              type="button" 
-              class="nav-tab-btn" 
+            <button
+              type="button"
+              class="nav-tab-btn"
               :class="{ active: activeTab === 'analisis' }"
               @click="openAnalyticsTab"
             >
@@ -957,37 +1110,87 @@ async function handleResetBranding() {
       </header>
 
       <main class="container admin-main-content">
-        <!-- 1. HERO TOKEN MANAGEMENT CARD -->
-        <section class="token-hero-card">
+        <!-- 1. MODE OPERASIONAL (saling eksklusif) + GATEWAY WHATSAPP -->
+        <section class="token-hero-card mode-card">
           <div class="token-hero-header">
             <div class="pill-live">
               <span class="dot-pulse"></span>
-              <span>TOKEN AKTIF UNTUK PELANGGAN</span>
+              <span>MODE PEMESANAN AKTIF</span>
             </div>
-            <span class="token-notice">Berikan token ini ke pelanggan yang baru datang</span>
+            <span class="token-notice">Hanya satu mode yang aktif — customer tidak memilih</span>
           </div>
 
-          <div class="token-hero-body">
-            <div class="token-number-box">
-              <span class="token-main-digits font-mono">{{ activeToken }}</span>
-            </div>
-
-            <div class="token-hero-actions">
-              <button type="button" class="btn-token-copy" @click="handleCopyToken">
-                <AppIcon :name="copied ? 'check' : 'copy'" :size="17" />
-                <span>{{ copied ? 'Tersalin!' : 'Salin Token' }}</span>
-              </button>
-
-              <button type="button" class="btn-token-regen" @click="handleGenerateNewToken">
-                <AppIcon name="sparkles" :size="17" />
-                <span>Generate Token Baru</span>
-              </button>
-            </div>
+          <div class="mode-segmented" role="tablist" aria-label="Mode pemesanan">
+            <button
+              type="button"
+              role="tab"
+              class="mode-seg-btn"
+              :class="{ active: store.activeMode === 'pos' }"
+              :disabled="modeSaving"
+              @click="switchMode('pos')"
+            >
+              <AppIcon name="coffee" :size="16" />
+              <span>On-site / Hari Jualan</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              class="mode-seg-btn"
+              :class="{ active: store.activeMode === 'preorder' }"
+              :disabled="modeSaving"
+              @click="switchMode('preorder')"
+            >
+              <AppIcon name="clock" :size="16" />
+              <span>Open PO {{ store.activeBatch?.name ? `— ${store.activeBatch.name}` : '' }}</span>
+            </button>
           </div>
 
           <p class="token-hero-hint">
-            <strong>Alur Kerja:</strong> Pelanggan memasukkan <strong>Nama</strong> dan token <strong>{{ activeToken }}</strong> pada pop-up di halaman menu. Begitu berhasil verifikasi, token otomatis hangus dan kasir otomatis mendapatkan token baru berikutnya.
+            <strong>Alur Kerja:</strong> Pelanggan melihat menu tanpa login, lalu di halaman
+            pembayaran memasukkan nama + nomor WhatsApp.
+            <template v-if="store.activeMode === 'preorder'">
+              Pada mode <strong>Open PO</strong> pesanan hanya tercatat setelah bukti pembayaran
+              diunggah, dan masuk otomatis ke batch <strong>{{ store.activeBatch?.name || '—' }}</strong>.
+            </template>
+            <template v-else>
+              Pada mode <strong>On-site</strong> pesanan langsung tercatat; bayar di kasir atau
+              transfer + bukti.
+            </template>
+            Setiap pesanan dibuat & setiap status berubah, WhatsApp customer dikirimi kabar otomatis.
           </p>
+
+          <!-- Status gateway WhatsApp -->
+          <div class="wa-gateway-box" :class="{ connected: store.waConnected }">
+            <div class="wa-gateway-head">
+              <AppIcon name="phone" :size="18" />
+              <div class="wa-gateway-text">
+                <strong>WhatsApp Otomatis {{ store.waConnected ? 'Terhubung' : 'Belum Terhubung' }}</strong>
+                <span>
+                  <template v-if="store.waConnected">
+                    Pesanan & perubahan status terkirim otomatis ke nomor customer.
+                  </template>
+                  <template v-else-if="store.waQr">
+                    Scan QR dengan nomor WA khusus pengirim (Perangkat Tertaut).
+                  </template>
+                  <template v-else>
+                    Menunggu gateway wa-gateway… pastikan service berjalan.
+                  </template>
+                </span>
+              </div>
+              <span class="wa-status-pill" :class="{ on: store.waConnected }">
+                {{ store.waConnected ? 'ON' : 'OFF' }}
+              </span>
+            </div>
+            <div v-if="!store.waConnected && store.waQr" class="wa-qr-row">
+              <img :src="store.waQr" alt="QR pairing WhatsApp" class="wa-qr-img" />
+              <div class="wa-qr-actions">
+                <button type="button" class="btn-act btn-print" @click="refreshWaStatus">
+                  <AppIcon name="rotate-ccw" :size="14" />
+                  <span>Muat Ulang QR</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- 2. QUICK STATS ROW -->
@@ -1027,8 +1230,8 @@ async function handleResetBranding() {
               <AppIcon name="shield-check" :size="20" />
             </div>
             <div class="stat-info">
-              <span class="stat-label">Token Hangus</span>
-              <strong class="stat-val font-mono">{{ Object.keys(usedTokensMap).length }}</strong>
+              <span class="stat-label">Belum Lunas</span>
+              <strong class="stat-val font-mono">{{ orderHistory.filter(o => !o.payment?.paid).length }}</strong>
             </div>
           </div>
         </section>
@@ -1082,7 +1285,7 @@ async function handleResetBranding() {
               <input 
                 v-model="searchQuery" 
                 type="text" 
-                placeholder="Cari nomor pesanan, nama pelanggan, token, atau metode..."
+                placeholder="Cari kode pesanan, nama, nomor WhatsApp, batch..."
                 class="search-input"
               />
             </div>
@@ -1100,8 +1303,9 @@ async function handleResetBranding() {
                 <tr>
                   <th>No. Pesanan</th>
                   <th>Waktu</th>
+                  <th>Mode / Batch</th>
                   <th>Pelanggan</th>
-                  <th>Token</th>
+                  <th>WhatsApp</th>
                   <th>Menu Pesanan</th>
                   <th>Total Biaya</th>
                   <th>Metode Bayar</th>
@@ -1116,11 +1320,17 @@ async function handleResetBranding() {
                     <strong>{{ ord.orderId }}</strong>
                   </td>
                   <td class="col-time">{{ formatDate(ord.createdAt) }}</td>
+                  <td class="col-channel">
+                    <span class="badge-channel" :class="ord.channel === 'preorder' ? 'preorder' : 'pos'">
+                      {{ ord.channel === 'preorder' ? 'Open PO' : 'On-site' }}
+                    </span>
+                    <span v-if="ord.batch?.name" class="batch-tag">{{ ord.batch.name }}</span>
+                  </td>
                   <td class="col-name">
                     <strong>{{ ord.customer?.name || '-' }}</strong>
                   </td>
                   <td class="col-token">
-                    <span class="badge-token font-mono">#{{ ord.customer?.token || '-' }}</span>
+                    <span class="badge-token font-mono">{{ ord.customer?.phone || '-' }}</span>
                   </td>
                   <td class="col-items">
                     <div class="items-summary" :title="ord.items?.map(i => `${i.name} (x${i.quantity})`).join(', ')">
@@ -1130,7 +1340,7 @@ async function handleResetBranding() {
                   <td class="col-total font-mono font-bold">{{ formatRupiah(ord.breakdown?.total) }}</td>
                   <td class="col-payment">
                     <span class="badge-payment" :class="ord.payment?.method">
-                      {{ ord.payment?.method === 'qris' ? 'QRIS' : 'Tunai di Kasir' }}
+                      {{ ord.payment?.label || (ord.payment?.method === 'cash' ? 'Tunai di Kasir' : 'QRIS') }}
                     </span>
                   </td>
                   <td class="col-status">
@@ -1261,34 +1471,95 @@ async function handleResetBranding() {
           </div>
         </section>
 
-        <!-- ================= TAB 3: TOKENS LOG ================= -->
-        <section v-if="activeTab === 'tokens'" class="content-section-card">
+        <!-- ================= TAB 3: MODE & BATCH OPEN PO ================= -->
+        <section v-if="activeTab === 'mode'" class="content-section-card">
           <div class="section-top-bar">
             <div class="section-title-wrap">
-              <h2 class="section-title">Log Token Sekali Pakai & Keamanan</h2>
-              <span class="section-subtitle">Daftar token yang telah hangus karena sudah menyelesaikan transaksi</span>
+              <h2 class="section-title">Mode Pemesanan & Batch Open PO</h2>
+              <span class="section-subtitle">
+                Nyalakan/matikan tiap mode, lalu buka batch Open PO baru. Hanya satu batch yang aktif pada satu waktu.
+              </span>
+            </div>
+
+            <button type="button" class="btn-refresh" @click="fetchModeSettings">
+              <AppIcon name="sparkles" :size="14" />
+              <span>Muat Ulang</span>
+            </button>
+          </div>
+
+          <!-- Buat batch baru -->
+          <div class="batch-form-card">
+            <h3 class="batch-form-title">Buka Batch Open PO Baru</h3>
+            <div class="batch-form-grid">
+              <div class="input-field-batch">
+                <label class="field-label-batch" for="batch-name">Nama Batch *</label>
+                <input
+                  id="batch-name"
+                  v-model="batchForm.name"
+                  type="text"
+                  placeholder="Contoh: Batch 3 — Jumat 12 Des"
+                  class="text-input-batch"
+                />
+              </div>
+              <div class="input-field-batch">
+                <label class="field-label-batch" for="batch-deadline">Batas Akhir Pesan</label>
+                <input
+                  id="batch-deadline"
+                  v-model="batchForm.orderDeadline"
+                  type="datetime-local"
+                  class="text-input-batch"
+                />
+              </div>
+              <div class="input-field-batch">
+                <label class="field-label-batch" for="batch-pickup">Siap Diambil</label>
+                <input
+                  id="batch-pickup"
+                  v-model="batchForm.pickupDate"
+                  type="datetime-local"
+                  class="text-input-batch"
+                />
+              </div>
+              <div class="input-field-batch batch-form-action">
+                <button type="button" class="btn-primary-action" :disabled="isCreatingBatch" @click="createBatch">
+                  <AppIcon name="plus" :size="16" />
+                  <span>{{ isCreatingBatch ? 'Menyimpan...' : 'Buka Batch' }}</span>
+                </button>
+                <span class="field-hint">Membuka batch baru otomatis menutup batch sebelumnya.</span>
+              </div>
             </div>
           </div>
 
-          <div class="tokens-intro-banner">
-            <AppIcon name="shield-check" :size="18" />
-            <span>Setiap token bersifat <strong>sekali pakai (one-time use)</strong>. Jika pelanggan memasukkan kembali token yang telah hangus, sistem otomatis menampilkan struk digital pesanan yang telah mereka buat sebelumnya.</span>
+          <!-- Peringatan: gateway WA putus -->
+          <div v-if="!store.waConnected" class="tokens-intro-banner warn">
+            <AppIcon name="phone" :size="18" />
+            <span><strong>WhatsApp otomatis mati.</strong> Notifikasi pesanan tidak terkirim sampai gateway terhubung (scan QR di kartu atas) — tombol kirim manual tetap bisa dipakai.</span>
           </div>
 
-          <div v-if="Object.keys(usedTokensMap).length === 0" class="empty-state text-center">
-            <p>Belum ada token yang hangus.</p>
+          <!-- Daftar batch -->
+          <div v-if="batchList.length === 0" class="empty-state text-center">
+            <AppIcon name="clock" :size="36" class="empty-icon" />
+            <p>Belum ada batch Open PO. Buat batch pertama di atas.</p>
           </div>
 
-          <div v-else class="tokens-grid">
-            <div v-for="(info, tkn) in usedTokensMap" :key="tkn" class="token-history-card">
-              <div class="history-top">
-                <span class="history-token font-mono">#{{ tkn }}</span>
-                <span class="history-status-tag">Hangus</span>
+          <div v-else class="batch-list">
+            <div v-for="b in batchList" :key="b.id" class="batch-card" :class="{ open: b.status === 'open' }">
+              <div class="batch-card-head">
+                <strong class="batch-card-name">{{ b.name }}</strong>
+                <span class="batch-status-tag" :class="b.status">{{ b.status === 'open' ? 'Dibuka' : 'Ditutup' }}</span>
               </div>
-              <div class="history-meta">
-                <div>Pelanggan: <strong>{{ info.customerName || 'Pelanggan' }}</strong></div>
-                <div>No. Pesanan: <strong class="font-mono text-sage">{{ info.orderId || '-' }}</strong></div>
-                <div class="history-time">{{ formatDate(info.burnedAt) }}</div>
+              <div class="batch-card-meta">
+                <span><AppIcon name="clock" :size="13" /> Batas pesan: <strong>{{ formatDateTimeShort(b.orderDeadline) }}</strong></span>
+                <span><AppIcon name="map-pin" :size="13" /> Siap ambil: <strong>{{ formatDateTimeShort(b.pickupDate) }}</strong></span>
+              </div>
+              <div class="batch-card-actions">
+                <button v-if="b.status === 'open'" type="button" class="btn-act btn-cancel-order" @click="closeBatch(b.id)">
+                  <AppIcon name="close" :size="14" />
+                  <span>Tutup Batch</span>
+                </button>
+                <button v-else type="button" class="btn-act btn-print" @click="reopenBatch(b.id)">
+                  <AppIcon name="rotate-ccw" :size="14" />
+                  <span>Buka Lagi</span>
+                </button>
               </div>
             </div>
           </div>
@@ -1640,16 +1911,19 @@ async function handleResetBranding() {
                 <strong>{{ selectedOrder.customer?.name }}</strong>
               </div>
               <div class="meta-line">
-                <span class="lbl">Token Digunakan:</span>
-                <strong class="font-mono">#{{ selectedOrder.customer?.token || '-' }}</strong>
+                <span class="lbl">Nomor WhatsApp:</span>
+                <strong class="font-mono">{{ selectedOrder.customer?.phone || '-' }}</strong>
+              </div>
+              <div class="meta-line">
+                <span class="lbl">Mode Pesanan:</span>
+                <span>
+                  <strong>{{ selectedOrder.channel === 'preorder' ? 'Open PO' : 'On-site' }}</strong>
+                  <template v-if="selectedOrder.batch?.name"> · Batch {{ selectedOrder.batch.name }}</template>
+                </span>
               </div>
               <div class="meta-line">
                 <span class="lbl">Waktu Pemesanan:</span>
                 <span>{{ formatDate(selectedOrder.createdAt) }}</span>
-              </div>
-              <div class="meta-line">
-                <span class="lbl">Jenis Layanan:</span>
-                <span>{{ selectedOrder.customer?.orderType }} ({{ selectedOrder.customer?.tableOrAddress }})</span>
               </div>
               <div v-if="selectedOrder.customer?.specialRequest && selectedOrder.customer.specialRequest !== '-'" class="meta-line">
                 <span class="lbl">Catatan Pelanggan:</span>
@@ -1657,12 +1931,64 @@ async function handleResetBranding() {
               </div>
               <div class="meta-line">
                 <span class="lbl">Metode Pembayaran:</span>
-                <strong class="text-sage">{{ selectedOrder.payment?.method === 'qris' ? 'QRIS' : 'Tunai di Kasir' }}</strong>
+                <strong class="text-sage">{{ selectedOrder.payment?.label || selectedOrder.payment?.method }}</strong>
               </div>
             </div>
 
-            <!-- Dynamic QRIS Kasir (Tampilkan jika metode QRIS) -->
-            <div v-if="selectedOrder.payment?.method === 'qris'" class="qris-cashier-card">
+            <!-- Bukti pembayaran terunggah (Open PO / transfer) -->
+            <div v-if="selectedOrder.payment?.proof" class="proof-verify-card">
+              <div class="proof-verify-head">
+                <AppIcon name="shield-check" :size="18" />
+                <h4 class="cash-title">Bukti Pembayaran dari Customer</h4>
+                <span v-if="selectedOrder.payment?.paid" class="proof-verified-tag">Lunas</span>
+                <span v-else class="proof-pending-tag">Belum diverifikasi</span>
+              </div>
+              <a :href="api.fileUrl(selectedOrder.payment.proof)" target="_blank" rel="noopener">
+                <img
+                  :src="api.fileUrl(selectedOrder.payment.proof)"
+                  alt="Bukti pembayaran"
+                  class="proof-verify-img"
+                />
+              </a>
+              <p class="proof-verify-hint">
+                Cocokkan nominal di bukti dengan total tagihan
+                <strong>{{ formatRupiah(selectedOrder.breakdown?.total) }}</strong>
+                sebelum menekan tombol konfirmasi.
+              </p>
+              <div class="qris-pay-action-row">
+                <button
+                  v-if="!selectedOrder.payment?.paid"
+                  type="button"
+                  class="btn-mark-paid"
+                  @click="markOrderAsPaid(selectedOrder)"
+                >
+                  <AppIcon name="check" :size="18" />
+                  <span>Bukti Sesuai — Tandai Lunas</span>
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn-act btn-cancel-order"
+                  @click="revertPaidStatus(selectedOrder)"
+                >
+                  <AppIcon name="rotate-ccw" :size="14" />
+                  <span>Kembalikan ke Belum Bayar</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn-act btn-print"
+                  :disabled="!selectedOrder.payment?.paid || isSendingReceipt"
+                  :title="selectedOrder.payment?.paid ? 'Kirim nota digital langsung via WhatsApp' : 'Tersedia setelah lunas'"
+                  @click="sendWaReceipt(selectedOrder)"
+                >
+                  <AppIcon name="phone" :size="14" />
+                  <span>{{ isSendingReceipt ? 'Mengirim…' : 'Kirim Nota Digital' }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Dynamic QRIS Kasir: metode QRIS legacy, atau tab QRIS pada order cash -->
+            <div v-else-if="selectedOrder.payment?.method === 'qris' || (selectedOrder.payment?.method === 'cash' && cashPayTab === 'qris' && !selectedOrder.payment?.proof)" class="qris-cashier-card">
               <div class="qris-cashier-header">
                 <div class="qris-title-group">
                   <AppIcon name="qr-code" :size="22" class="qris-icon" />
@@ -1698,22 +2024,55 @@ async function handleResetBranding() {
                 </div>
               </div>
 
-              <!-- Button to mark order as paid -->
+              <!-- Button to mark order as paid / revert to unpaid -->
               <div class="qris-pay-action-row">
-                <button 
-                  type="button" 
+                <button
+                  v-if="!selectedOrder.payment?.paid"
+                  type="button"
                   class="btn-mark-paid"
-                  :disabled="selectedOrder.payment?.paid"
                   @click="markOrderAsPaid(selectedOrder)"
                 >
                   <AppIcon name="check" :size="18" />
-                  <span>{{ selectedOrder.payment?.paid ? 'Pembayaran Telah Lunas' : 'Konfirmasi Sudah Dibayar' }}</span>
+                  <span>Konfirmasi Sudah Dibayar</span>
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="btn-act btn-cancel-order"
+                  @click="revertPaidStatus(selectedOrder)"
+                >
+                  <AppIcon name="rotate-ccw" :size="14" />
+                  <span>Kembalikan ke Belum Bayar</span>
                 </button>
               </div>
             </div>
 
-            <!-- Validasi Pembayaran Tunai di Kasir (Tampilkan jika metode cash / tunai) -->
+            <!-- Bayar di Kasir: Tunai (kalkulator) atau QRIS dinamis -->
             <div v-else class="cash-cashier-card">
+              <div class="mode-segmented" role="tablist" aria-label="Metode bayar di kasir">
+                <button
+                  type="button"
+                  role="tab"
+                  class="mode-seg-btn"
+                  :class="{ active: cashPayTab === 'tunai' }"
+                  @click="cashPayTab = 'tunai'"
+                >
+                  <AppIcon name="cash" :size="15" />
+                  <span>Uang Tunai</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class="mode-seg-btn"
+                  :class="{ active: cashPayTab === 'qris' }"
+                  @click="cashPayTab = 'qris'"
+                >
+                  <AppIcon name="qr-code" :size="15" />
+                  <span>QRIS Dinamis</span>
+                </button>
+              </div>
+
+              <template v-if="cashPayTab === 'tunai'">
               <div class="cash-cashier-header">
                 <div class="cash-title-group">
                   <AppIcon name="cash" :size="22" class="cash-icon" />
@@ -1814,22 +2173,29 @@ async function handleResetBranding() {
                 <!-- Tombol Validasi Kasir -->
                 <div class="cash-pay-action-row">
                   <button 
+                    v-if="!selectedOrder.payment?.paid"
                     type="button" 
                     class="btn-validate-cash"
-                    :class="{ 'btn-paid-done': selectedOrder.payment?.paid }"
-                    :disabled="selectedOrder.payment?.paid || !isCashSufficient || isValidatingCash"
+                    :disabled="!isCashSufficient || isValidatingCash"
                     @click="validateCashPayment(selectedOrder)"
                   >
-                    <AppIcon :name="selectedOrder.payment?.paid ? 'check' : 'check-circle'" :size="18" />
+                    <AppIcon name="check-circle" :size="18" />
                     <span>
-                      {{ selectedOrder.payment?.paid 
-                          ? 'Pembayaran Tunai Telah Lunas & Tervalidasi' 
-                          : (isValidatingCash ? 'Menyimpan Pembayaran...' : 'Validasi Pembayaran Tunai & Lunas') 
-                      }}
+                      {{ isValidatingCash ? 'Menyimpan Pembayaran...' : 'Validasi Pembayaran Tunai & Lunas' }}
                     </span>
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="btn-act btn-cancel-order"
+                    @click="revertPaidStatus(selectedOrder)"
+                  >
+                    <AppIcon name="rotate-ccw" :size="14" />
+                    <span>Kembalikan ke Belum Bayar</span>
                   </button>
                 </div>
               </div>
+              </template>
             </div>
 
             <!-- Preparation Status Controls (Dapur & Barista) -->
@@ -1844,11 +2210,13 @@ async function handleResetBranding() {
                 </span>
               </div>
               <p class="prep-control-sub">
-                Mengubah ke status <strong>"Siap Diambil"</strong> akan otomatis mengirimkan bunyi lonceng & notifikasi ke perangkat pelanggan.
+                Mengubah status langsung tersinkron ke halaman status pelanggan. Untuk memberi kabar
+                lewat WhatsApp, pakai tombol di bawah — WhatsApp terbuka dengan pesan sudah terisi,
+                tinggal tekan <strong>Kirim</strong>.
               </p>
               <div class="prep-pill-group">
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   class="btn-prep-opt"
                   :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Sedang Disiapkan' }"
                   @click="handleUpdatePrepStatus(selectedOrder, 'Sedang Disiapkan')"
@@ -1857,18 +2225,18 @@ async function handleResetBranding() {
                   <span>Sedang Disiapkan</span>
                 </button>
 
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   class="btn-prep-opt opt-ready"
                   :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Siap Diambil' }"
                   @click="handleUpdatePrepStatus(selectedOrder, 'Siap Diambil')"
                 >
                   <AppIcon name="sparkles" :size="14" />
-                  <span>Siap Diambil (Kirim Notif)</span>
+                  <span>Siap Diambil</span>
                 </button>
 
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   class="btn-prep-opt opt-done"
                   :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Selesai' }"
                   @click="handleUpdatePrepStatus(selectedOrder, 'Selesai')"
@@ -1876,6 +2244,25 @@ async function handleResetBranding() {
                   <AppIcon name="check" :size="14" />
                   <span>Selesai</span>
                 </button>
+              </div>
+
+              <!-- Kabar status via WhatsApp -->
+              <div class="wa-status-block">
+                <span class="wa-status-title">Kabar status via WhatsApp</span>
+                <div class="wa-status-btns">
+                  <button
+                    v-for="opt in WA_STATUS_OPTIONS"
+                    :key="opt"
+                    type="button"
+                    class="btn-wa-status"
+                    :disabled="!selectedOrder.payment?.paid || !selectedOrder.customer?.phone"
+                    :title="selectedOrder.payment?.paid ? 'Buka WhatsApp dengan pesan siap kirim' : 'Kirim setelah pembayaran lunas'"
+                    @click="sendWaStatus(selectedOrder, opt)"
+                  >
+                    <AppIcon name="phone" :size="13" />
+                    <span>{{ opt }}</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -2957,6 +3344,36 @@ async function handleResetBranding() {
   color: var(--color-peach);
 }
 
+.badge-payment.transfer {
+  background-color: #E0F2FE;
+  color: #075985;
+}
+
+.badge-channel {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.badge-channel.pos {
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.badge-channel.preorder {
+  background-color: #EDE9FE;
+  color: #5B21B6;
+}
+
+.batch-tag {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: var(--color-text-subtle);
+}
+
 .badge-pay-status {
   padding: 3px 8px;
   border-radius: var(--radius-full);
@@ -3222,7 +3639,368 @@ async function handleResetBranding() {
   color: #991B1B;
 }
 
-/* ================= TOKENS LOG ================= */
+/* ================= MODE & BATCH ================= */
+.tokens-intro-banner.warn {
+  background-color: #FEF3C7;
+  color: #92400E;
+}
+
+/* Switch mode eksklusif (segmented) */
+.mode-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  padding: 4px;
+  margin: 1rem 0;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.mode-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mode-seg-btn:hover:not(:disabled) {
+  color: var(--color-primary);
+}
+
+.mode-seg-btn.active {
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.mode-seg-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* Gateway WhatsApp */
+.wa-gateway-box {
+  margin-top: 1rem;
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+}
+
+.wa-gateway-box.connected {
+  border-color: #25D366;
+  background-color: #F0FDF4;
+}
+
+.wa-gateway-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--color-primary);
+}
+
+.wa-gateway-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.wa-gateway-text strong {
+  font-size: 0.9rem;
+}
+
+.wa-gateway-text span {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.wa-status-pill {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  background-color: #E5E7EB;
+  color: #4B5563;
+  flex-shrink: 0;
+}
+
+.wa-status-pill.on {
+  background-color: #25D366;
+  color: #FFFFFF;
+}
+
+.wa-qr-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.wa-qr-img {
+  width: 180px;
+  height: 180px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background-color: #FFFFFF;
+}
+
+.wa-qr-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+/* Form batch */
+.batch-form-card {
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.batch-form-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin-bottom: 1rem;
+}
+
+.batch-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr) auto;
+  gap: 1rem;
+  align-items: flex-end;
+}
+
+.input-field-batch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field-label-batch {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.text-input-batch {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: #FFFFFF;
+  outline: none;
+  font-size: 0.85rem;
+}
+
+.text-input-batch:focus {
+  border-color: var(--color-primary);
+}
+
+.batch-form-action {
+  min-width: 150px;
+}
+
+/* Daftar batch */
+.batch-list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.batch-card {
+  padding: 1rem 1.15rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.batch-card.open {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary-soft);
+}
+
+.batch-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.batch-card-name {
+  font-size: 0.9rem;
+  color: var(--color-primary);
+}
+
+.batch-status-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+}
+
+.batch-status-tag.open {
+  background-color: #D1FAE5;
+  color: #065F46;
+}
+
+.batch-status-tag.closed {
+  background-color: #E5E7EB;
+  color: #4B5563;
+}
+
+.batch-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-bottom: 0.85rem;
+}
+
+.batch-card-meta span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.batch-card-meta strong {
+  color: var(--color-text-main);
+}
+
+.batch-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ================= MODAL: BUKTI BAYAR ================= */
+.proof-verify-card {
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.25rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+}
+
+.proof-verify-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  color: var(--color-primary);
+}
+
+.proof-verified-tag,
+.proof-pending-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+}
+
+.proof-verified-tag {
+  background-color: #D1FAE5;
+  color: #065F46;
+}
+
+.proof-pending-tag {
+  background-color: #FEF3C7;
+  color: #92400E;
+}
+
+.proof-verify-img {
+  display: block;
+  max-width: 100%;
+  max-height: 340px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background-color: #FFFFFF;
+  object-fit: contain;
+}
+
+.proof-verify-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin: 0.75rem 0 1rem;
+  line-height: 1.5;
+}
+
+/* ================= MODAL: STATUS VIA WHATSAPP ================= */
+.wa-status-block {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--border-light);
+}
+
+.wa-status-title {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.6rem;
+}
+
+.wa-status-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn-wa-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid #25D366;
+  border-radius: var(--radius-full);
+  background-color: #FFFFFF;
+  color: #128C4A;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-wa-status:hover:not(:disabled) {
+  background-color: #25D366;
+  color: #FFFFFF;
+}
+
+.btn-wa-status:disabled {
+  border-color: var(--border-light);
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ================= TOKENS LOG (legacy, tidak dipakai lagi) ================= */
 .tokens-intro-banner {
   display: flex;
   align-items: center;
@@ -3821,12 +4599,6 @@ async function handleResetBranding() {
 .btn-validate-cash:disabled {
   background-color: #A3BFB0;
   cursor: not-allowed;
-}
-
-.btn-validate-cash.btn-paid-done {
-  background-color: #2E7D32;
-  color: #FFFFFF;
-  cursor: default;
 }
 
 /* Preparation Status Controls in Modal */

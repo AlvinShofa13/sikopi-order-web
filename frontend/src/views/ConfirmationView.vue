@@ -5,6 +5,7 @@ import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
 import { isOrderPaid, paymentLabel } from '@/utils/salesAnalytics'
 import { formatRupiah } from '@/utils/format'
+import { orderStatusText, openWhatsApp } from '@/utils/wa'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const route = useRoute()
@@ -19,6 +20,43 @@ const order = computed(() => {
 })
 
 const orderPaid = computed(() => isOrderPaid(order.value))
+const isPreorder = computed(() => order.value?.channel === 'preorder')
+const proofUrl = computed(() => {
+  const p = order.value?.payment?.proof
+  return p ? api.fileUrl(p) : ''
+})
+
+// Halaman dibuka tanpa pesanan di store (mis. bookmark lama / device lain):
+// pelanggan cukup mengetik kode transaksinya.
+const lookupCode = ref('')
+const lookupError = ref('')
+const isLookingUp = ref(false)
+
+async function lookupOrder() {
+  const code = (lookupCode.value || '').trim().toUpperCase()
+  if (!code) return
+  isLookingUp.value = true
+  lookupError.value = ''
+  const res = await api.orders.getById(code)
+  isLookingUp.value = false
+  if (!res.ok) {
+    lookupError.value = res.error || 'Kode pesanan tidak ditemukan.'
+    return
+  }
+  store.handleIncomingOrder(res.data)
+  router.replace(`/konfirmasi/${res.data.orderId}`)
+}
+
+function formatDateTime(iso) {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit'
+  }) + ' WIB'
+}
 
 // Status Penyiapan Dinamis
 const isStep2Active = computed(() => {
@@ -188,8 +226,17 @@ function copyOrderNumber() {
   }, 2200)
 }
 
+// Kabar "Siap Diambil" dari modal notifikasi: wa.me membuka chat dengan
+// pesan sudah terisi, tinggal tekan "Kirim" di WhatsApp.
+function sendStatusUpdate() {
+  if (!order.value) return
+  openWhatsApp(
+    order.value.customer?.phone,
+    orderStatusText(order.value, order.value.orderStatus, store.brandName)
+  )
+}
+
 function startNewOrder() {
-  store.clearCustomerSession()
   router.push('/menu')
 }
 </script>
@@ -197,6 +244,34 @@ function startNewOrder() {
 <template>
   <div class="confirmation-view">
     <div class="container confirmation-container">
+      <!-- Pesanan tidak ada di perangkat ini: minta kode transaksi -->
+      <div v-if="!order" class="lookup-card">
+        <div class="lookup-icon-wrap"><AppIcon name="receipt" :size="32" /></div>
+        <h1 class="lookup-title">Cek Status Pesanan</h1>
+        <p class="lookup-subtitle">
+          Tidak ada akun atau password yang perlu diingat. Masukkan kode transaksi
+          <span class="font-mono">{{ orderId }}</span> yang Anda terima saat memesan,
+          atau ketik kode pesanan Anda yang lain.
+        </p>
+        <div class="lookup-form">
+          <input
+            v-model="lookupCode"
+            type="text"
+            placeholder="Contoh: SK-2K9QW4Z7"
+            class="lookup-input font-mono"
+            @keyup.enter="lookupOrder"
+          />
+          <button type="button" class="btn-lookup" :disabled="isLookingUp" @click="lookupOrder">
+            {{ isLookingUp ? 'Mencari...' : 'Lihat Status' }}
+          </button>
+        </div>
+        <span v-if="lookupError" class="lookup-error">{{ lookupError }}</span>
+        <button type="button" class="btn-back-menu" @click="startNewOrder">
+          Kembali ke Pilihan Menu
+        </button>
+      </div>
+
+      <template v-else>
       <!-- Minimal Stepper -->
       <div class="checkout-stepper print-hide">
         <div class="step-indicator completed">
@@ -225,48 +300,86 @@ function startNewOrder() {
           <AppIcon name="check" :size="32" stroke-width="2.5" />
         </div>
 
-        <h1 class="success-title">Pesanan Berhasil Dibuat!</h1>
+        <h1 class="success-title">{{ isPreorder ? 'Pesanan Open PO Terkirim!' : 'Pesanan Berhasil Dibuat!' }}</h1>
         <p class="success-subtitle">
-          Proses pemesanan Anda telah selesai dan langsung diteruskan ke tim kasir & barista SIKopi.
+          <template v-if="isPreorder">
+            Bukti pembayaran Anda sudah kami terima dan menunggu verifikasi kasir.
+            Pesanan langsung masuk batch <strong>{{ order?.batch?.name }}</strong>.
+          </template>
+          <template v-else>
+            Pesanan Anda sudah masuk antrean barista. Nominal akhir dihitung server
+            dari harga menu terbaru, jadi struct ini yang berlaku.
+          </template>
         </p>
 
         <!-- High Visibility Order Number Box -->
         <div class="order-number-banner">
-          <span class="order-number-kicker">Nomor Resmi Pesanan Anda</span>
+          <span class="order-number-kicker">Kode Transaksi Pesanan Anda</span>
           <div class="number-action-row">
             <span class="order-number-val font-mono">{{ orderId }}</span>
-            <button 
+            <button
               type="button"
-              class="btn-copy-id" 
+              class="btn-copy-id"
               @click="copyOrderNumber"
-              :title="copied ? 'Tersalin' : 'Salin Nomor Pesanan'"
+              :title="copied ? 'Tersalin' : 'Salin Kode Pesanan'"
             >
               <AppIcon :name="copied ? 'check' : 'copy'" :size="16" />
               <span>{{ copied ? 'Tersalin' : 'Salin' }}</span>
             </button>
           </div>
           <p class="order-number-hint">
-            Tunjukkan nomor pesanan ini kepada kasir saat melakukan pembayaran dan pengambilan menu.
+            Simpan kode ini. Buka tautan <span class="font-mono">/konfirmasi/{{ orderId }}</span>
+            kapan saja untuk melihat status, tanpa perlu login.
           </p>
         </div>
       </div>
 
-      <!-- Guidance Alert Box to Cashier (Hanya tampil jika belum dibayar) -->
+      <!-- Info Batch Open PO -->
+      <div v-if="isPreorder && order?.batch" class="batch-summary-card">
+        <div class="batch-summary-row">
+          <AppIcon name="receipt" :size="16" />
+          <span>Batch</span>
+          <strong>{{ order.batch.name }}</strong>
+        </div>
+        <div class="batch-summary-row">
+          <AppIcon name="clock" :size="16" />
+          <span>Siap diambil</span>
+          <strong>{{ formatDateTime(order.batch.pickupDate) }}</strong>
+        </div>
+      </div>
+
+      <!-- Bukti pembayaran yang diunggah -->
+      <div v-if="proofUrl" class="proof-card">
+        <div class="proof-card-head">
+          <AppIcon name="shield-check" :size="18" />
+          <strong>Bukti pembayaran terkirim</strong>
+          <span v-if="orderPaid" class="proof-verified-badge">Terverifikasi kasir</span>
+          <span v-else class="proof-pending-badge">Menunggu verifikasi kasir</span>
+        </div>
+        <img :src="proofUrl" alt="Bukti pembayaran" class="proof-thumb" />
+      </div>
+
+      <!-- Guidance Alert Box (Hanya tampil jika belum lunas) -->
       <div v-if="!orderPaid" class="cashier-guidance-card">
         <div class="guidance-icon-box">
           <AppIcon name="receipt" :size="24" />
         </div>
         <div class="guidance-body">
-          <h3 class="guidance-title">Langkah Selanjutnya di Meja Kasir</h3>
+          <h3 class="guidance-title">
+            {{ order?.payment?.method === 'cash' ? 'Langkah Selanjutnya di Meja Kasir' : 'Menunggu Verifikasi Pembayaran' }}
+          </h3>
           <p class="guidance-text">
-            Silakan menuju <strong>Meja Kasir {{ store.brandName || 'SIKopi' }}</strong>. 
-            <template v-if="order?.payment?.method === 'qris'">
-              Kasir akan menampilkan <strong>QRIS</strong> pada layar admin kasir untuk Anda scan langsung menggunakan m-Banking atau E-Wallet.
+            <template v-if="order?.payment?.method === 'cash'">
+              Silakan menuju <strong>Meja Kasir {{ store.brandName || 'SIKopi' }}</strong>.
+              Sebutkan nama Anda atau kode pesanan untuk membayar sebesar
+              <strong>{{ formatRupiah(order?.breakdown?.total) }}</strong> — kasir juga bisa
+              menampilkan QRIS dinamis sesuai nominal. Struk resmi dicetak setelah lunas.
             </template>
             <template v-else>
-              Sebutkan nomor pesanan atau nama Anda untuk melakukan pembayaran tunai.
+              Bukti transfer Anda sudah masuk dan sedang diperiksa kasir
+              <strong>{{ store.brandName || 'SIKopi' }}</strong>. Setelah terverifikasi, Anda
+              menerima <strong>nota digital</strong> lewat WhatsApp dan pesanan Anda mulai diracik.
             </template>
-            Struk cetak resmi akan disiapkan dan diserahkan oleh staf kasir kami.
           </p>
         </div>
       </div>
@@ -349,13 +462,17 @@ function startNewOrder() {
             <span class="meta-val font-bold">{{ order?.customer?.name || 'Pelanggan' }}</span>
           </div>
           <div class="meta-item">
+            <span class="meta-label">Mode Pesanan</span>
+            <span class="meta-val">{{ isPreorder ? `Open PO · ${order?.batch?.name || '-'}` : 'On-site / Hari Jualan' }}</span>
+          </div>
+          <div class="meta-item">
             <span class="meta-label">Waktu Pemesanan</span>
             <span class="meta-val">{{ formatDate(order?.createdAt) }}</span>
           </div>
           <div class="meta-item">
             <span class="meta-label">Metode Pembayaran</span>
             <span class="meta-val font-bold">
-              {{ order?.payment?.label || (order?.payment?.method === 'qris' ? 'QRIS' : 'Bayar di Kasir') }}
+              {{ order?.payment?.label || (order?.payment?.method === 'cash' ? 'Bayar di Kasir' : 'Transfer QRIS + Bukti') }}
             </span>
           </div>
           <div class="meta-item">
@@ -365,8 +482,8 @@ function startNewOrder() {
             </span>
           </div>
           <div class="meta-item">
-            <span class="meta-label">Jenis Layanan</span>
-            <span class="meta-val">{{ order?.customer?.orderType || 'Makan di Tempat' }}</span>
+            <span class="meta-label">Nomor WhatsApp</span>
+            <span class="meta-val font-mono">{{ order?.customer?.phone || '-' }}</span>
           </div>
         </div>
 
@@ -423,9 +540,9 @@ function startNewOrder() {
 
         <div class="receipt-footer-notes">
           <p class="eco-thankyou">
-            Terima kasih telah memesan di SIKopi!
+            Terima kasih telah memesan di {{ store.brandName || 'SIKopi' }}!
           </p>
-          <p class="clean-slogan">Instagram: @sikopi.jkt · Sehat Alami Tanpa Pemanis Buatan</p>
+          <p class="clean-slogan">Simpan kode {{ orderId }} untuk cek status pesanan kapan saja.</p>
         </div>
       </div>
 
@@ -437,6 +554,7 @@ function startNewOrder() {
           <AppIcon name="arrow-right" :size="16" />
         </button>
       </div>
+      </template>
     </div>
 
     <!-- Modal Notifikasi Interaktif: Pesanan Siap Diambil -->
@@ -456,6 +574,10 @@ function startNewOrder() {
           <button type="button" class="btn-ready-ack" @click="showReadyModal = false">
             <span>Saya Menuju Meja Barista</span>
           </button>
+          <button type="button" class="btn-ready-wa" @click="sendStatusUpdate">
+            <AppIcon name="phone" :size="15" />
+            <span>Kirim Kabar "Siap Diambil" ke WhatsApp Saya</span>
+          </button>
         </div>
       </div>
     </Transition>
@@ -463,6 +585,206 @@ function startNewOrder() {
 </template>
 
 <style scoped>
+/* ============ Lookup kode transaksi ============ */
+.lookup-card {
+  max-width: 480px;
+  margin: 3rem auto;
+  padding: 2.25rem 2rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  box-shadow: var(--shadow-subtle);
+}
+
+.lookup-icon-wrap {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lookup-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  letter-spacing: -0.02em;
+  margin-bottom: 0.5rem;
+}
+
+.lookup-subtitle {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  margin-bottom: 1.5rem;
+}
+
+.lookup-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lookup-input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  outline: none;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lookup-input:focus {
+  border-color: var(--color-primary);
+  background-color: #FFFFFF;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.btn-lookup {
+  height: 46px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-lookup:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.lookup-error {
+  display: block;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: #C53030;
+}
+
+.btn-back-menu {
+  margin-top: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.btn-back-menu:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+/* ============ Batch & bukti bayar ============ */
+.batch-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+  padding: 1.1rem 1.4rem;
+  background-color: var(--color-primary-soft);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.batch-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
+}
+
+.batch-summary-row svg {
+  color: var(--color-primary);
+}
+
+.batch-summary-row span {
+  min-width: 110px;
+}
+
+.batch-summary-row strong {
+  color: var(--color-primary);
+}
+
+.proof-card {
+  margin-bottom: 1.5rem;
+  padding: 1.25rem 1.4rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+}
+
+.proof-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  color: var(--color-primary);
+  margin-bottom: 1rem;
+}
+
+.proof-verified-badge,
+.proof-pending-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+}
+
+.proof-verified-badge {
+  background-color: #E6F4EA;
+  color: #137333;
+}
+
+.proof-pending-badge {
+  background-color: #FEF7E0;
+  color: #B06000;
+}
+
+.proof-thumb {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  object-fit: contain;
+  background-color: var(--bg-primary);
+}
+
+.btn-ready-wa {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 0.75rem;
+  padding: 11px 16px;
+  background-color: #25D366;
+  color: #FFFFFF;
+  border: none;
+  border-radius: var(--radius-full);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-ready-wa:hover {
+  background-color: #1eb355;
+}
 .confirmation-view {
   padding: 2.5rem 0 5rem;
 }

@@ -12,6 +12,7 @@ const route = useRoute()
 const isMobileMenuOpen = ref(false)
 const cartCount = computed(() => store.cartCount)
 const isCurrent = (path) => route.path === path
+const hasCustomer = computed(() => !!store.customer.name)
 
 function toggleMobileMenu() {
   isMobileMenuOpen.value = !isMobileMenuOpen.value
@@ -21,13 +22,8 @@ function closeMobileMenu() {
   isMobileMenuOpen.value = false
 }
 
-function handleClearSession() {
-  store.clearCustomerSession()
-  closeMobileMenu()
-}
-
-function handleOpenAuth() {
-  store.openAuthModal()
+function handleClearCustomer() {
+  store.setCustomer({ name: '', phone: '' })
   closeMobileMenu()
 }
 
@@ -95,56 +91,38 @@ onUnmounted(() => {
 
       <!-- Right Action: User Status, Cart, & Mobile Hamburger -->
       <div class="nav-actions">
-        <!-- Desktop Customer Session Chip -->
-        <div v-if="store.customerSession.isVerified" class="nav-user-chip desktop-only" title="Pelanggan Terverifikasi">
+        <!-- Desktop Customer Chip (nama + nomor WhatsApp terakhir) -->
+        <div v-if="hasCustomer" class="nav-user-chip desktop-only" title="Data pemesan terakhir">
           <AppIcon name="user" :size="14" />
-          <span class="user-chip-name">{{ store.customerSession.name }}</span>
-          <span class="user-chip-tag">#{{ store.customerSession.token }}</span>
-          <button 
-            type="button" 
-            class="btn-chip-clear" 
-            @click="handleClearSession"
-            title="Ganti nama atau token"
-            aria-label="Ganti pengguna"
+          <span class="user-chip-name">{{ store.customer.name }}</span>
+          <span class="user-chip-tag">{{ store.customer.phone }}</span>
+          <button
+            type="button"
+            class="btn-chip-clear"
+            @click="handleClearCustomer"
+            title="Hapus nama & nomor WhatsApp tersimpan"
+            aria-label="Hapus data pemesan"
           >
             <AppIcon name="close" :size="12" />
           </button>
         </div>
 
-        <!-- Desktop Auth Trigger Button -->
-        <button 
-          v-else 
-          type="button" 
-          class="btn-nav-auth desktop-only" 
-          @click="handleOpenAuth"
-          title="Masukkan nama dan token 3 digit"
-        >
-          <AppIcon name="user" :size="15" />
-          <span>Masuk / Token</span>
-        </button>
-
-        <!-- Mobile Quick Token Pill (Mobile Only - Ringkas & Rapi) -->
-        <div 
-          v-if="store.customerSession.isVerified" 
-          class="mobile-token-pill mobile-only" 
+        <!-- Mobile Customer Pill (Mobile Only - Ringkas & Rapi) -->
+        <div
+          v-if="hasCustomer"
+          class="mobile-token-pill mobile-only"
           @click="toggleMobileMenu"
-          title="Klik untuk info sesi pelanggan"
+          title="Data pemesan terakhir"
         >
           <AppIcon name="user" :size="13" />
-          <span class="mobile-token-text">#{{ store.customerSession.token }}</span>
+          <span class="mobile-token-text">{{ store.customer.name }}</span>
         </div>
 
-        <!-- Mobile Auth Trigger (Mobile Only) -->
-        <button 
-          v-else 
-          type="button" 
-          class="mobile-btn-auth mobile-only" 
-          @click="handleOpenAuth"
-          title="Masukkan token 3 digit"
-        >
-          <AppIcon name="user" :size="13" />
-          <span>Token</span>
-        </button>
+        <!-- Tamu: pesan tanpa login, nama & WhatsApp diisi saat pembayaran -->
+        <div v-else class="nav-guest-chip desktop-only" title="Tanpa login — isi nama & nomor WhatsApp saat pembayaran">
+          <AppIcon name="coffee" :size="14" />
+          <span>Tanpa akun</span>
+        </div>
 
         <!-- Cart Button -->
         <RouterLink to="/pesanan" class="cart-button" title="Lihat Keranjang Pesanan" @click="closeMobileMenu">
@@ -176,25 +154,25 @@ onUnmounted(() => {
       <div v-if="isMobileMenuOpen" class="mobile-menu-portal">
         <div class="mobile-menu-backdrop" @click="closeMobileMenu"></div>
         <div class="mobile-menu-sheet">
-          <!-- Customer Session Status Card -->
-          <div v-if="store.customerSession.isVerified" class="mobile-user-card">
+          <!-- Data Pemesan Card -->
+          <div v-if="hasCustomer" class="mobile-user-card">
             <div class="user-card-header">
               <div class="user-avatar-circle">
                 <AppIcon name="user" :size="18" />
               </div>
               <div class="user-info-text">
-                <span class="user-greeting">Pelanggan Terverifikasi</span>
-                <strong class="user-fullname">{{ store.customerSession.name }}</strong>
+                <span class="user-greeting">Data Pemesan</span>
+                <strong class="user-fullname">{{ store.customer.name }}</strong>
               </div>
-              <span class="user-token-badge">Token: #{{ store.customerSession.token }}</span>
+              <span class="user-token-badge">{{ store.customer.phone }}</span>
             </div>
-            <button 
-              type="button" 
-              class="btn-mobile-reset-session" 
-              @click="handleClearSession"
+            <button
+              type="button"
+              class="btn-mobile-reset-session"
+              @click="handleClearCustomer"
             >
               <AppIcon name="close" :size="13" />
-              <span>Ganti Nama / Token Pelanggan</span>
+              <span>Hapus Data Pemesan</span>
             </button>
           </div>
 
@@ -202,13 +180,9 @@ onUnmounted(() => {
             <div class="guest-card-body">
               <div class="guest-badge-row">
                 <span class="guest-status-dot"></span>
-                <span class="guest-title">Belum Memasukkan Token</span>
+                <span class="guest-title">Pesan Tanpa Login</span>
               </div>
-              <p class="guest-desc">Masukkan nama dan token 3 digit yang diberikan oleh kasir untuk mulai memesan hidangan.</p>
-              <button type="button" class="btn-mobile-auth" @click="handleOpenAuth">
-                <AppIcon name="user" :size="14" />
-                <span>Masukkan Nama & Token</span>
-              </button>
+              <p class="guest-desc">Lihat menu, pilih pesanan, lalu isi nama dan nomor WhatsApp saat pembayaran. Status pesanan bisa dicek dengan kode transaksi yang Anda terima.</p>
             </div>
           </div>
 
@@ -447,25 +421,18 @@ onUnmounted(() => {
   background-color: rgba(44, 62, 45, 0.15);
 }
 
-/* Desktop Auth Button */
-.btn-nav-auth {
+/* Tamu (tanpa akun) */
+.nav-guest-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 7px 13px;
-  background-color: transparent;
-  border: 1px solid var(--border-medium);
+  background-color: var(--color-primary-soft);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-full);
   color: var(--color-primary);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.btn-nav-auth:hover {
-  border-color: var(--color-primary);
-  background-color: var(--color-primary-soft);
 }
 
 /* Mobile-Only Elements Visibility (Hidden on Desktop) */
@@ -520,19 +487,6 @@ nav.desktop-only {
     font-weight: 700;
     cursor: pointer;
     border: 1px solid rgba(44, 62, 45, 0.1);
-  }
-
-  .mobile-btn-auth {
-    align-items: center;
-    gap: 4px;
-    padding: 5px 10px;
-    background-color: transparent;
-    border: 1px solid var(--border-medium);
-    border-radius: var(--radius-full);
-    color: var(--color-primary);
-    font-size: 0.78rem;
-    font-weight: 600;
-    cursor: pointer;
   }
 
   /* Compact Cart Button on Mobile */
