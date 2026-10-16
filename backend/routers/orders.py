@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import random
 import re
 import secrets
@@ -15,7 +16,7 @@ from models import AppSetting, MenuItem, Order, OrderItem, PreorderBatch
 from realtime import order_manager
 from routers.preorder import MODE_POS, MODE_PREORDER, active_batch, get_active_mode
 from routers.uploads import ORDER_CODE_RE
-from schemas import OrderCreate, OrderStatusUpdate
+from schemas import OrderCreate, OrderStatusUpdate, PosOrderCreate
 from wa_client import send_wa_text
 from wa_templates import order_created_text, payment_verified_text, status_text
 
@@ -346,6 +347,196 @@ def _resolve_batch(db: Session, batch_id: int | None) -> PreorderBatch:
     return batch
 
 
+def _bundle_contents_label(db: Session, menu_item) -> str:
+    """Label isi paket bundling ('2x Kopi Susu, 1x Roti') dari data menu saat ini.
+
+    Dipakai sebagai snapshot pada catatan baris order agar dapur/kasir tahu
+    isi paket walau komposisi paket diubah/dihapus kemudian. '' bila bukan paket.
+    """
+    if not getattr(menu_item, "is_bundle", False):
+        return ""
+    try:
+        lines = json.loads(menu_item.bundle_items or "[]")
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(lines, list):
+        return ""
+    parts = []
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        comp_id = (line.get("id") or "").strip()
+        qty = int(line.get("quantity") or 0)
+        if not comp_id or qty <= 0:
+            continue
+        comp = db.query(MenuItem).filter(MenuItem.id == comp_id).first()
+        parts.append(f"{qty}x {comp.name if comp else comp_id}")
+    return ", ".join(parts)
+
+
+def _parse_menu_variants(menu_item) -> list:
+    """Daftar varian resmi menu: [{"name": ..., "price": ...}]. [] bila tak ada."""
+    try:
+        rows = json.loads(getattr(menu_item, "variants", None) or "[]")
+    except (ValueError, TypeError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def _resolve_variant_extras(menu_item, wanted) -> tuple:
+    """Cocokkan varian pilihan dengan daftar resmi menu (harga dari server).
+
+    Mengembalikan (names, extra_per_porsi). Melempar 422 bila ada varian tak dikenal.
+    """
+    official = _parse_menu_variants(menu_item)
+    names = [str(v).strip() for v in (wanted or []) if str(v).strip()]
+    if not names:
+        return [], 0.0
+    if not official:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Menu '{menu_item.name}' tidak punya varian. Muat ulang halaman menu.",
+        )
+    by_name = {}
+    for row in official:
+        if isinstance(row, dict) and (row.get("name") or "").strip():
+            by_name.setdefault((row.get("name") or "").strip(), float(row.get("price") or 0.0))
+    resolved = []
+    extra = 0.0
+    for name in names:
+        if name not in by_name:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Varian '{name}' tidak dikenal pada menu '{menu_item.name}'.",
+            )
+        if name not in resolved:
+            resolved.append(name)
+            extra += by_name[name]
+    return resolved, extra
+
+
+def _rp(amount: float) -> str:
+    """Format rupiah ringkas gaya Indonesia untuk snapshot catatan (Rp5.000)."""
+    return "Rp" + f"{float(amount or 0.0):,.0f}".replace(",", ".")
+
+
+def _price_with_breakdown(db: Session, items) -> tuple:
+    """Hitung ulang harga dari `menu_items` (abaikan price client).
+
+    Mengembalikan (items_data, subtotal, total). Melempar 422 bila ada menu tak dikenal.
+    """
+    items_data = []
+    subtotal = 0.0
+    for it in items:
+        menu_item = db.query(MenuItem).filter(MenuItem.id == (it.id or "").strip()).first()
+        if not menu_item:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Menu '{it.name}' sudah tidak tersedia. Muat ulang halaman menu.",
+            )
+        line_total = float(menu_item.price) * int(it.quantity)
+        subtotal += line_total
+        # Snapshot isi paket pada catatan baris (dapur/kasir tahu komposisi
+        # paket walau paket diubah/dihapus kemudian).
+        bundle_label = _bundle_contents_label(db, menu_item)
+        # Varian: harga ekstra selalu dari server (abaikan harga client).
+        variant_names, variant_extra = _resolve_variant_extras(menu_item, it.variants)
+        if variant_extra:
+            line_total += variant_extra * int(it.quantity)
+            subtotal += variant_extra * int(it.quantity)
+        note = (it.notes or "").strip()
+        if variant_names:
+            extra_tag = f" (+{_rp(variant_extra)})" if variant_extra else ""
+            variant_tag = f"[Varian: {', '.join(variant_names)}{extra_tag}]"
+            note = f"{note} {variant_tag}".strip() if note else variant_tag
+        if bundle_label:
+            note = f"{note} [Isi paket: {bundle_label}]".strip() if note else f"[Isi paket: {bundle_label}]"
+        items_data.append({
+            "menu_item_id": menu_item.id,
+            "name": menu_item.name,
+            "price": float(menu_item.price) + variant_extra,
+            "quantity": int(it.quantity),
+            "notes": note,
+            "subtotal": line_total,
+        })
+
+    eco_fee = 0.0   # mode uji: biaya kemasan 0
+    tax = 0.0       # mode uji: PB1 0
+    return items_data, subtotal, subtotal + eco_fee + tax
+
+
+def _new_unique_order_code(db: Session) -> str:
+    """Kode transaksi baru yang dijamin belum dipakai."""
+    order_id = new_order_code()
+    for _ in range(5):
+        if not _code_taken(db, order_id):
+            break
+        order_id = new_order_code()
+    return order_id
+
+
+async def _persist_new_order(
+    db: Session,
+    background: BackgroundTasks,
+    *,
+    items_data,
+    subtotal: float,
+    total: float,
+    customer_name: str,
+    phone: str,
+    special_request: str,
+    channel: str,
+    batch_id,
+    method: str,
+    payment_reference: str,
+    proof_url,
+    order_id: str,
+    is_paid: bool,
+    payment_status: str,
+    cash_received=None,
+    cash_change=None,
+) -> Dict[str, Any]:
+    """Satu jalur pencatatan order (publik & kasir): simpan, broadcast
+    realtime, dan jadwalkan WA otomatis (hanya bila nomor HP terisi)."""
+    new_order = Order(
+        order_id=order_id,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        customer_name=customer_name,
+        customer_phone=phone,
+        customer_token=None,  # sistem token dihapus
+        special_request=special_request,
+        channel=channel,
+        batch_id=batch_id,
+        payment_method=method,
+        payment_label=PAYMENT_LABELS[method],
+        payment_reference=payment_reference,
+        payment_status=payment_status,
+        payment_proof=proof_url,
+        is_paid=is_paid,
+        cash_received=cash_received,
+        cash_change=cash_change,
+        subtotal=subtotal,
+        eco_fee=0.0,
+        tax=0.0,
+        total=total,
+        order_status="Diterima & Disiapkan",
+    )
+    db.add(new_order)
+    db.flush()
+
+    for item_dict in items_data:
+        db.add(OrderItem(order_id=order_id, **item_dict))
+
+    db.commit()
+    db.refresh(new_order)
+    serialized = serialize_order(new_order)
+    await order_manager.broadcast("NEW_ORDER", serialized)
+    # Notifikasi WhatsApp otomatis (fire-and-forget; gagal kirim tak menggagalkan order)
+    if phone:
+        background.add_task(_notify_customer, phone, order_created_text(serialized, _brand_name(db)))
+    return serialized
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_order(
     payload: OrderCreate,
@@ -390,29 +581,7 @@ async def create_order(
         raise HTTPException(status_code=422, detail="Bukti pembayaran tidak valid.")
 
     # 3. Harga dari database (abaikan price & breakdown dari client)
-    items_data = []
-    subtotal = 0.0
-    for it in payload.items:
-        menu_item = db.query(MenuItem).filter(MenuItem.id == (it.id or "").strip()).first()
-        if not menu_item:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Menu '{it.name}' sudah tidak tersedia. Muat ulang halaman menu.",
-            )
-        line_total = float(menu_item.price) * int(it.quantity)
-        subtotal += line_total
-        items_data.append({
-            "menu_item_id": menu_item.id,
-            "name": menu_item.name,
-            "price": float(menu_item.price),
-            "quantity": int(it.quantity),
-            "notes": it.notes or "",
-            "subtotal": line_total,
-        })
-
-    eco_fee = 0.0   # mode uji: biaya kemasan 0
-    tax = 0.0       # mode uji: PB1 0
-    total = subtotal + eco_fee + tax
+    items_data, subtotal, total = _price_with_breakdown(db, payload.items)
 
     # 4. Identitas & kontak pelanggan
     customer_name = (payload.customer.name or "").strip() or "Pelanggan"
@@ -428,46 +597,106 @@ async def create_order(
     if ORDER_CODE_RE.match(raw_code) and not _code_taken(db, raw_code):
         order_id = raw_code
     else:
-        order_id = new_order_code()
-        for _ in range(5):
-            if not _code_taken(db, order_id):
-                break
-            order_id = new_order_code()
+        order_id = _new_unique_order_code(db)
 
-    new_order = Order(
-        order_id=order_id,
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    return await _persist_new_order(
+        db,
+        background,
+        items_data=items_data,
+        subtotal=subtotal,
+        total=total,
         customer_name=customer_name,
-        customer_phone=phone,
-        customer_token=None,  # sistem token dihapus
+        phone=phone,
         special_request=payload.customer.specialRequest or "-",
         channel=channel,
         batch_id=batch.id if batch else None,
-        payment_method=method,
-        payment_label=PAYMENT_LABELS[method],
+        method=method,
         payment_reference=payload.payment.reference or f"REF-{random.randint(100000, 999000)}",
-        payment_status="Menunggu Pembayaran",
-        payment_proof=proof_url,
+        proof_url=proof_url,
+        order_id=order_id,
         is_paid=False,
-        subtotal=subtotal,
-        eco_fee=eco_fee,
-        tax=tax,
-        total=total,
-        order_status="Diterima & Disiapkan",
+        payment_status="Menunggu Pembayaran",
     )
-    db.add(new_order)
-    db.flush()
 
-    for item_dict in items_data:
-        db.add(OrderItem(order_id=order_id, **item_dict))
 
-    db.commit()
-    db.refresh(new_order)
-    serialized = serialize_order(new_order)
-    await order_manager.broadcast("NEW_ORDER", serialized)
-    # Notifikasi WhatsApp otomatis (fire-and-forget; gagal kirim tak menggagalkan order)
-    background.add_task(_notify_customer, phone, order_created_text(serialized, _brand_name(db)))
-    return serialized
+@router.post("/pos", status_code=status.HTTP_201_CREATED)
+async def create_pos_order(
+    payload: PosOrderCreate,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_admin),
+):
+    """Pesanan langsung dari kasir (tab POS panel admin).
+
+    Aturan khusus kasir (berbeda dari jalur publik):
+    - Channel selalu `pos`, apa pun mode aktif global (tanpa batch, tanpa gerbang bukti).
+    - Nomor WA opsional: kosong = order tetap tercatat, WA dilewati.
+    - `cash`: tunai & lunas seketika — `cashReceived` wajib >= total, kembalian
+      dihitung server (otoritas uang tetap di server).
+    - `qris`: QRIS dinamis — order tercatat belum lunas; kasir menampilkan QR
+      ke pelanggan lalu menandai lunas setelah pembayaran terkonfirmasi.
+    """
+    if not payload.items:
+        raise HTTPException(status_code=422, detail="Keranjang pesanan kosong.")
+
+    method = (payload.paymentMethod or "cash").strip().lower()
+    method = "qris" if method == "qris" else "cash"
+
+    items_data, subtotal, total = _price_with_breakdown(db, payload.items)
+
+    customer_name = ((payload.customer.name if payload.customer else "") or "").strip() or "Pelanggan"
+    phone = normalize_phone(payload.customer.phone if payload.customer else "")
+    order_id = _new_unique_order_code(db)
+
+    if method == "qris":
+        return await _persist_new_order(
+            db,
+            background,
+            items_data=items_data,
+            subtotal=subtotal,
+            total=total,
+            customer_name=customer_name,
+            phone=phone,
+            special_request=(payload.customer.specialRequest if payload.customer else None) or "-",
+            channel=CHANNEL_POS,
+            batch_id=None,
+            method="qris",
+            payment_reference=f"QRIS-{order_id}",
+            proof_url=None,
+            order_id=order_id,
+            is_paid=False,
+            payment_status="Menunggu Pembayaran",
+            cash_received=0.0,
+            cash_change=0.0,
+        )
+
+    received = float(payload.cashReceived or 0.0)
+    if received < total:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Uang tunai kurang {total - received:,.0f}. Terima minimal sebesar total tagihan.",
+        )
+
+    return await _persist_new_order(
+        db,
+        background,
+        items_data=items_data,
+        subtotal=subtotal,
+        total=total,
+        customer_name=customer_name,
+        phone=phone,
+        special_request=(payload.customer.specialRequest if payload.customer else None) or "-",
+        channel=CHANNEL_POS,
+        batch_id=None,
+        method="cash",
+        payment_reference=f"TUNAI-{order_id}",
+        proof_url=None,
+        order_id=order_id,
+        is_paid=True,
+        payment_status="Lunas",
+        cash_received=received,
+        cash_change=received - total,
+    )
 
 
 @router.patch("/{order_id}/status")

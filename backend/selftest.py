@@ -7,6 +7,8 @@ Pengiriman WA sungguhan di-mock — yang diperiksa adalah LOGIKA pemicunya
 """
 
 import asyncio
+import inspect
+import json
 import sys
 
 from fastapi import BackgroundTasks, HTTPException
@@ -16,11 +18,14 @@ from sqlalchemy.orm import sessionmaker
 import routers.orders as orders_mod
 import routers.wa as wa_mod
 import wa_client
+from auth_dep import require_admin
 from database import Base
-from models import MenuItem, PreorderBatch
-from routers.orders import create_order, new_order_code, normalize_phone, update_order_status
+from models import Category, MenuItem, PreorderBatch
+from routers.categories import create_category, delete_category, get_all_categories, update_category
+from routers.menu import create_menu_item
+from routers.orders import create_order, create_pos_order, new_order_code, normalize_phone, update_order_status
 from routers.preorder import MODE_POS, MODE_PREORDER, get_active_mode, set_active_mode
-from schemas import OrderCreate, OrderStatusUpdate
+from schemas import CategoryCreate, CategoryUpdate, MenuItemCreate, OrderCreate, OrderStatusUpdate, PosOrderCreate
 from wa_templates import order_created_text, order_receipt_text, payment_verified_text, status_text
 
 PASSED = 0
@@ -204,6 +209,159 @@ def run():
     check("isi = nota digital", "Nota Digital" in SENT[0][1] and "SK-2K9QW4Z7" in SENT[0][1])
     expect_http(lambda: wa_mod.send_order_receipt("SK-TIDAKADA", db, True), 404, "Kode salah -> 404")
     wa_mod.send_wa_text = real_wa_send
+
+    def pos_payload(**overrides):
+        data = dict(
+            customer=dict(name="Tamu", phone="-"),
+            items=[dict(id="menu-kopi", name="Kopi", price=1.0, quantity=1)],
+            cashReceived=30000.0,
+        )
+        data.update(overrides)
+        return PosOrderCreate(**data)
+
+    def place_pos(db, p):
+        """Buat order kasir + jalankan background tasks-nya (seperti FastAPI)."""
+        bg = BackgroundTasks()
+        order = asyncio.run(create_pos_order(p, bg, db, True))
+        asyncio.run(bg())
+        return order
+
+    def attempt_pos(p):
+        return lambda: asyncio.run(create_pos_order(p, BackgroundTasks(), db, True))
+
+    print("\n[12] POS kasir: tunai & lunas seketika, channel selalu pos")
+    dep = inspect.signature(create_pos_order).parameters["_admin"].default
+    check("endpoint POS dijaga require_admin", getattr(dep, "dependency", None) is require_admin)
+    SENT.clear()
+    pos = place_pos(db, pos_payload())
+    check("channel selalu pos", pos["channel"] == MODE_POS)
+    check("langsung lunas", pos["payment"]["paid"] is True and pos["payment"]["status"] == "Lunas")
+    check("total dari harga DB (25.000 x 1)", pos["breakdown"]["total"] == 25000.0)
+    check("uang diterima tercatat", pos["payment"]["cashReceived"] == 30000.0)
+    check("kembalian dihitung server", pos["payment"]["cashChange"] == 5000.0)
+    check("tanpa HP -> WA tidak terkirim", len(SENT) == 0)
+    expect_http(attempt_pos(pos_payload(cashReceived=1000.0)), 422, "Uang tunai kurang ditolak")
+    expect_http(attempt_pos(pos_payload(items=[])), 422, "Keranjang kosong ditolak")
+    expect_http(
+        attempt_pos(pos_payload(items=[dict(id="menu-hantu", name="Hantu", price=1.0, quantity=1)])),
+        422,
+        "Menu tidak dikenal ditolak",
+    )
+    SENT.clear()
+    pos_wa = place_pos(
+        db,
+        pos_payload(customer=dict(name="Siti", phone="081298765432"), cashReceived=25000.0),
+    )
+    check("uang pas -> kembalian nol", pos_wa["payment"]["cashChange"] == 0.0)
+    check("ada HP -> 1 pesan pesanan-diterima", len(SENT) == 1 and SENT[0][0] == "6281298765432")
+    set_active_mode(db, MODE_PREORDER)
+    db.commit()
+    pos_po = place_pos(db, pos_payload())
+    check("mode preorder aktif -> POS tetap channel pos", pos_po["channel"] == MODE_POS)
+    set_active_mode(db, MODE_POS)
+    db.commit()
+
+    print("\n[13] Paket bundling + POS QRIS")
+    db.add(MenuItem(id="menu-roti", name="Roti Bakar", category="Camilan Sehat", price=10000.0, is_available=True))
+    db.commit()
+
+    def attempt_menu(p):
+        return lambda: create_menu_item(p, db, True)
+
+    expect_http(
+        attempt_menu(MenuItemCreate(name="Paket Kosong", price=30000.0, is_bundle=True, bundle_items="[]")),
+        422,
+        "Paket tanpa isi ditolak",
+    )
+    expect_http(
+        attempt_menu(MenuItemCreate(
+            name="Paket Hantu", price=30000.0, is_bundle=True,
+            bundle_items=json.dumps([{"id": "menu-hantu", "quantity": 1}]),
+        )),
+        422,
+        "Isi paket tak dikenal ditolak",
+    )
+    bundle = create_menu_item(MenuItemCreate(
+        name="Paket Hemat", price=30000.0, is_bundle=True,
+        bundle_items=json.dumps([{"id": "menu-kopi", "quantity": 1}, {"id": "menu-roti", "quantity": 2}]),
+    ), db, True)
+    check("paket tersimpan sebagai bundle", bundle.is_bundle is True)
+    expect_http(
+        attempt_menu(MenuItemCreate(
+            name="Paket Ganda", price=50000.0, is_bundle=True,
+            bundle_items=json.dumps([{"id": bundle.id, "quantity": 1}]),
+        )),
+        422,
+        "Paket bersarang ditolak",
+    )
+    SENT.clear()
+    bpos = place_pos(db, pos_payload(
+        items=[dict(id=bundle.id, name="Paket Hemat", price=1.0, quantity=1)],
+        cashReceived=30000.0,
+    ))
+    check("total = harga paket (bukan jumlah isi)", bpos["breakdown"]["total"] == 30000.0)
+    check(
+        "snapshot isi paket di catatan baris",
+        "[Isi paket:" in bpos["items"][0]["notes"] and "Kopi Susu" in bpos["items"][0]["notes"],
+    )
+    qpos = place_pos(db, pos_payload(paymentMethod="qris", cashReceived=0.0))
+    check("POS QRIS tercatat belum lunas", qpos["payment"]["paid"] is False)
+    check("POS QRIS bermetode qris", qpos["payment"]["method"] == "qris")
+    check("POS QRIS tanpa uang muka tidak ditolak", qpos["breakdown"]["total"] == 25000.0)
+
+    print("\n[14] Varian menu: biaya tambahan dari server + snapshot")
+    vmenu = create_menu_item(MenuItemCreate(
+        name="Kopi Gula Aren", price=20000.0,
+        variants=json.dumps([{"name": "Es", "price": 0}, {"name": "Extra Shot", "price": 5000}]),
+    ), db, True)
+    check("varian tersimpan", vmenu.variants is not None)
+    expect_http(
+        attempt_menu(MenuItemCreate(name="Bad1", price=1.0, variants=json.dumps([{"name": "", "price": 0}]))),
+        422,
+        "Nama varian kosong ditolak",
+    )
+    expect_http(
+        attempt_menu(MenuItemCreate(name="Bad2", price=1.0, variants=json.dumps([{"name": "X", "price": -100}]))),
+        422,
+        "Biaya varian negatif ditolak",
+    )
+    SENT.clear()
+    vorder = place(db, payload(
+        orderId="SK-VARIAN01",
+        items=[dict(id=vmenu.id, name="Kopi Gula Aren", price=1.0, quantity=2, variants=["Es", "Extra Shot"])],
+    ))
+    check("total = (20000+5000) x 2", vorder["breakdown"]["total"] == 50000.0)
+    check(
+        "snapshot varian di catatan baris",
+        "[Varian: Es, Extra Shot (+Rp5.000)]" in vorder["items"][0]["notes"],
+    )
+    expect_http(
+        attempt(payload(
+            orderId="SK-VARIAN02",
+            items=[dict(id=vmenu.id, name="Kopi Gula Aren", price=1.0, quantity=1, variants=["Hantu"])],
+        )),
+        422,
+        "Varian tak dikenal ditolak",
+    )
+
+    print("\n[15] CRUD kategori menu")
+    expect_http(lambda: create_category(CategoryCreate(name="   "), db, True), 422, "Nama kosong ditolak")
+    cat = create_category(CategoryCreate(name="  Minuman Dingin "), db, True)
+    check("nama di-trim", cat.name == "Minuman Dingin")
+    expect_http(lambda: create_category(CategoryCreate(name="minuman dingin"), db, True), 409, "Duplikat (beda kapital) ditolak")
+    cats = get_all_categories(db)
+    check("daftar memuat kategori baru", any(c.name == "Minuman Dingin" for c in cats))
+    mkat = create_menu_item(MenuItemCreate(name="Es Teh", price=8000.0, category="Minuman Dingin"), db, True)
+    renamed = update_category(cat.id, CategoryUpdate(name="Minuman Segar"), db, True)
+    check("rename berhasil", renamed.name == "Minuman Segar")
+    db.refresh(mkat)
+    check("menu ikut pindah kategori", mkat.category == "Minuman Segar")
+    expect_http(lambda: delete_category(cat.id, db, True), 409, "Hapus kategori terpakai ditolak")
+    expect_http(lambda: delete_category(999999, db, True), 404, "Hapus id asing -> 404")
+    mkat.category = "Camilan Sehat"
+    db.commit()
+    delete_category(cat.id, db, True)
+    check("kategori kosong bisa dihapus", get_all_categories(db) is not None and all(c.id != cat.id for c in get_all_categories(db)))
 
     orders_mod.send_wa_text = real_send
     print(f"\nPASS {PASSED} pemeriksaan.")

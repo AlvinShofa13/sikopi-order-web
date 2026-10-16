@@ -18,7 +18,29 @@ class AdminLoginResponse(BaseModel):
     role: Optional[str] = None
 
 
+# --- Category Schemas ---
+class CategoryCreate(BaseModel):
+    name: str
+
+
+class CategoryUpdate(BaseModel):
+    name: str
+
+
+class CategoryResponse(BaseModel):
+    id: int
+    name: str
+
+    class Config:
+        from_attributes = True
+
+
 # --- Menu Schemas ---
+class BundleLinePayload(BaseModel):
+    id: str
+    quantity: int = 1
+
+
 class MenuItemBase(BaseModel):
     name: str
     category: str = "Kopi Pilihan"
@@ -26,6 +48,11 @@ class MenuItemBase(BaseModel):
     price: float = 1.0
     image: Optional[str] = ""
     is_available: bool = True
+    is_bundle: bool = False
+    # JSON string '[{"id": "menu-x", "quantity": 2}]'; hanya dipakai bila is_bundle.
+    bundle_items: Optional[str] = None
+    # JSON string '[{"name": "Es", "price": 0}]'; price = biaya tambahan (0 = gratis).
+    variants: Optional[str] = None
 
 
 class MenuItemCreate(MenuItemBase):
@@ -39,6 +66,9 @@ class MenuItemUpdate(BaseModel):
     price: Optional[float] = None
     image: Optional[str] = None
     is_available: Optional[bool] = None
+    is_bundle: Optional[bool] = None
+    bundle_items: Optional[str] = None
+    variants: Optional[str] = None
 
 
 class MenuItemResponse(MenuItemBase):
@@ -57,6 +87,7 @@ class OrderItemPayload(BaseModel):
     price: float
     quantity: int = 1
     notes: Optional[str] = ""
+    variants: Optional[List[str]] = None  # nama varian; harga ekstra dari server
 
 
 class CustomerPayload(BaseModel):
@@ -91,6 +122,15 @@ class OrderCreate(BaseModel):
     payment: PaymentPayload
     items: List[OrderItemPayload]
     breakdown: Optional[BreakdownPayload] = None
+
+
+class PosOrderCreate(BaseModel):
+    """Pesanan langsung dari kasir (panel admin): selalu channel pos, tunai,
+    dan lunas seketika. Nomor WA opsional (kosong = tanpa notifikasi WA)."""
+    customer: CustomerPayload = CustomerPayload(name="Pelanggan", phone="-")
+    items: List[OrderItemPayload]
+    cashReceived: float = 0.0
+    paymentMethod: str = "cash"  # 'cash' (lunas seketika) | 'qris' (QR dinamis, lunas menyusul)
 
 
 class OrderStatusUpdate(BaseModel):

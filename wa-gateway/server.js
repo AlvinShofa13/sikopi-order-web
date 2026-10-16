@@ -15,6 +15,8 @@
  */
 
 const express = require('express')
+const fs = require('fs')
+const path = require('path')
 const QRCode = require('qrcode')
 const {
   default: makeWASocket,
@@ -32,6 +34,27 @@ app.use(express.json({ limit: '256kb' }))
 let sock = null
 let connected = false
 let lastQr = null
+let connectTimer = null
+
+function scheduleConnect(delay) {
+  // Satu jadwal reconnect saja: /logout dan handler 'close' bisa memicu
+  // bersamaan, tanpa ini dua socket hidup sekaligus (satu bocor).
+  if (connectTimer) clearTimeout(connectTimer)
+  connectTimer = setTimeout(() => { connectTimer = null; connect() }, delay)
+}
+
+function clearAuthDir() {
+  // Baileys tidak menghapus berkas sesi saat logout: tanpa ini reconnect
+  // memakai sesi mati (loop 401). Sisakan .gitkeep agar folder tetap ada.
+  try {
+    for (const f of fs.readdirSync(AUTH_DIR)) {
+      if (f === '.gitkeep') continue
+      fs.rmSync(path.join(AUTH_DIR, f), { recursive: true, force: true })
+    }
+  } catch (e) {
+    console.log('[wa] gagal membersihkan sesi:', e && e.message)
+  }
+}
 
 function digits(raw) {
   return String(raw || '').replace(/\D/g, '').replace(/^0/, '')
@@ -66,7 +89,7 @@ async function connect() {
       const loggedOut = code === DisconnectReason.loggedOut
       console.log(`[wa] koneksi tertutup (code ${code})${loggedOut ? ' — sesi dihapus, perlu scan ulang' : ' — mencoba lagi...'}`)
       // loggedOut (401): hapus sesi agar QR baru muncul; selain itu reconnect otomatis.
-      setTimeout(connect, loggedOut ? 1000 : 5000)
+      scheduleConnect(loggedOut ? 1000 : 5000)
     }
   })
 }
@@ -93,9 +116,11 @@ app.post('/logout', async (_req, res) => {
   try {
     await sock?.logout()
   } catch { /* abaikan */ }
+  sock = null
   connected = false
   lastQr = null
-  setTimeout(connect, 1000)
+  clearAuthDir()
+  scheduleConnect(1500)
   res.json({ ok: true })
 })
 

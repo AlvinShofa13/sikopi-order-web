@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from database import engine, SessionLocal, Base, ensure_schema
 from seed import seed_database
-from routers import auth, menu, orders, preorder, settings, uploads, wa
+from routers import auth, categories, menu, orders, preorder, settings, uploads, wa
 
 # Ensure backend uploads directory exists
 UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -55,6 +55,7 @@ app.add_middleware(
 
 # Include Routers under /api
 app.include_router(auth.router, prefix="/api")
+app.include_router(categories.router, prefix="/api")
 app.include_router(menu.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
 app.include_router(preorder.router, prefix="/api")

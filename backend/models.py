@@ -18,6 +18,13 @@ class MenuItem(Base):
     price = Column(Float, nullable=False, default=1.0)
     image = Column(Text, nullable=True)
     is_available = Column(Boolean, default=True, nullable=False)
+    # Paket bundling: satu harga untuk beberapa menu. bundle_items = JSON
+    # '[{"id": "menu-x", "quantity": 2}]'. Non-paket selalu NULL.
+    is_bundle = Column(Boolean, default=False, nullable=False)
+    bundle_items = Column(Text, nullable=True)
+    # Varian per menu: JSON '[{"name": "Es", "price": 0}]'. price = biaya
+    # tambahan per porsi (0 = gratis). Kosong/NULL = tanpa varian.
+    variants = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
@@ -80,6 +87,17 @@ class OrderItem(Base):
     subtotal = Column(Float, nullable=False)
 
     order = relationship("Order", back_populates="items")
+
+
+class Category(Base):
+    """Kategori menu (dikelola kasir via CRUD). Menu menyimpan kategori
+    sebagai teks; rename kategori ikut mengubah teks pada menu."""
+
+    __tablename__ = "categories"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now)
 
 
 class PreorderBatch(Base):

@@ -117,6 +117,30 @@ export const api = {
     }
   },
 
+  // Kategori menu (daftar publik; ubah khusus admin)
+  categories: {
+    async getAll() {
+      return request('/categories')
+    },
+    async create(name) {
+      return request('/categories', {
+        method: 'POST',
+        body: JSON.stringify({ name })
+      })
+    },
+    async update(id, name) {
+      return request(`/categories/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name })
+      })
+    },
+    async remove(id) {
+      return request(`/categories/${id}`, {
+        method: 'DELETE'
+      })
+    }
+  },
+
   // Preorder & mode operasional (saling eksklusif: 'pos' | 'preorder')
   preorder: {
     async getModes() {
@@ -169,6 +193,10 @@ export const api = {
     async sendTest() {
       return request('/wa/test', { method: 'POST' })
     },
+    // Lepas sesi WA yang sudah pairing (paksa scan ulang), tanpa buka WA di HP.
+    async release() {
+      return request('/wa/logout', { method: 'POST' })
+    },
     async sendReceipt(orderId) {
       return request(`/wa/order/${encodeURIComponent(orderId)}/receipt`, { method: 'POST' })
     }
@@ -196,6 +224,13 @@ export const api = {
       return request('/orders', {
         method: 'POST',
         body: JSON.stringify(orderData)
+      })
+    },
+    // Pesanan langsung dari kasir (tab POS admin): selalu lunas tunai.
+    async createPos(posData) {
+      return request('/orders/pos', {
+        method: 'POST',
+        body: JSON.stringify(posData)
       })
     },
     async updateStatus(orderId, statusData) {

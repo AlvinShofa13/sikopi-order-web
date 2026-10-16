@@ -49,3 +49,12 @@ def ensure_schema():
         for dead in ("qris_payload", "qris_image_url"):
             if dead in cols:
                 conn.execute(text(f"ALTER TABLE orders DROP COLUMN {dead}"))
+
+        # Paket bundling pada menu
+        menu_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(menu_items)")).fetchall()]
+        if "is_bundle" not in menu_cols:
+            conn.execute(text("ALTER TABLE menu_items ADD COLUMN is_bundle BOOLEAN DEFAULT 0"))
+        if "bundle_items" not in menu_cols:
+            conn.execute(text("ALTER TABLE menu_items ADD COLUMN bundle_items TEXT"))
+        if "variants" not in menu_cols:
+            conn.execute(text("ALTER TABLE menu_items ADD COLUMN variants TEXT"))

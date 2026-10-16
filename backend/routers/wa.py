@@ -10,7 +10,7 @@ from auth_dep import require_admin
 from database import get_db
 from models import AppSetting, Order
 from routers.orders import normalize_phone, serialize_order
-from wa_client import send_wa_text, wa_gateway_status
+from wa_client import send_wa_text, wa_gateway_logout, wa_gateway_status
 from wa_templates import order_receipt_text
 
 router = APIRouter(prefix="/wa", tags=["WhatsApp Gateway"])
@@ -25,6 +25,22 @@ class TestMessageResponse(BaseModel):
 def get_wa_status(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
     """Status koneksi Baileys (+ QR bila belum pairing) untuk panel admin."""
     return wa_gateway_status()
+
+
+@router.post("/logout", response_model=TestMessageResponse)
+def release_wa_session(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
+    """Lepas nomor WA yang sudah pairing langsung dari panel admin.
+
+    Tidak perlu buka WhatsApp di HP: gateway meng-unpair perangkat lalu
+    menghapus berkas sesi sehingga QR pairing baru muncul otomatis.
+    """
+    ok = wa_gateway_logout()
+    return TestMessageResponse(
+        success=ok,
+        message="Sesi WhatsApp dilepas. Scan QR baru untuk pairing ulang."
+        if ok
+        else "Gateway tidak terjangkau. Periksa service wa-gateway.",
+    )
 
 
 @router.post("/test", response_model=TestMessageResponse)

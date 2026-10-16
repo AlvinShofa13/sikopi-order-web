@@ -57,3 +57,9 @@ def wa_gateway_status() -> dict:
     if status != 200:
         return {"connected": False, "reachable": False}
     return {"connected": bool(data.get("connected")), "reachable": True, "qr": data.get("qr")}
+
+
+def wa_gateway_logout() -> bool:
+    """Lepas sesi WA yang sudah pairing (paksa scan ulang). True bila gateway menerima."""
+    status, _ = _post("/logout", {})
+    return status == 200

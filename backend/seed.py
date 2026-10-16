@@ -1,5 +1,12 @@
 from sqlalchemy.orm import Session
-from models import MenuItem
+from models import Category, MenuItem
+
+
+INITIAL_CATEGORIES = [
+    "Kopi Pilihan",
+    "Artisan Sandwich",
+    "Camilan Sehat",
+]
 
 
 INITIAL_MENUS = [
@@ -43,7 +50,12 @@ INITIAL_MENUS = [
 
 
 def seed_database(db: Session):
-    """Seed menu awal bila database masih kosong."""
+    """Seed menu & kategori awal bila database masih kosong (idempoten)."""
+    if db.query(Category).count() == 0:
+        for name in INITIAL_CATEGORIES:
+            db.add(Category(name=name))
+        db.commit()
+        print("[SEED] Successfully populated 3 initial categories.")
     existing_count = db.query(MenuItem).count()
     if existing_count == 0:
         for item_data in INITIAL_MENUS:

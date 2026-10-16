@@ -1,4 +1,5 @@
 <script setup>
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
@@ -7,6 +8,26 @@ import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
 const store = useOrderStore()
+
+// Cek status pesanan lama lewat kode transaksi (tanpa login).
+const lookupCode = ref('')
+const lookupError = ref('')
+const isLookingUp = ref(false)
+
+async function lookupOrder() {
+  const code = (lookupCode.value || '').trim().toUpperCase()
+  if (!code) return
+  isLookingUp.value = true
+  lookupError.value = ''
+  const res = await api.orders.getById(code)
+  isLookingUp.value = false
+  if (!res.ok) {
+    lookupError.value = res.error || 'Kode pesanan tidak ditemukan.'
+    return
+  }
+  store.handleIncomingOrder(res.data)
+  router.push(`/konfirmasi/${res.data.orderId}`)
+}
 
 function handleQuantityChange(id, change) {
   store.updateQuantity(id, change)
@@ -86,7 +107,7 @@ function continueShopping() {
           </div>
 
           <div class="items-list">
-            <div v-for="item in store.cart" :key="item.id" class="cart-item-card">
+            <div v-for="item in store.cart" :key="item.key || item.id" class="cart-item-card">
               <div class="item-visual">
                 <img :src="api.fileUrl(item.image)" :alt="item.name" class="item-thumbnail" />
               </div>
@@ -95,12 +116,13 @@ function continueShopping() {
                 <div class="item-headline-row">
                   <div>
                     <h3 class="item-name">{{ item.name }}</h3>
+                    <p v-if="(item.variants || []).length > 0" class="item-variants">Varian: {{ item.variants.join(', ') }}</p>
                     <p class="item-meta">{{ item.dietInfo }} · {{ item.calories }} kkal</p>
                   </div>
                   <button 
                     class="btn-trash" 
                     title="Hapus menu ini"
-                    @click="handleRemoveItem(item.id)"
+                    @click="handleRemoveItem(item.key || item.id)"
                   >
                     <AppIcon name="trash" :size="16" />
                   </button>
@@ -113,7 +135,7 @@ function continueShopping() {
                     :value="item.notes"
                     placeholder="Tambah catatan (opsional, misal: dressing dipisah)..."
                     class="item-note-input"
-                    @input="handleUpdateNotes(item.id, $event)"
+                    @input="handleUpdateNotes(item.key || item.id, $event)"
                   />
                 </div>
 
@@ -123,7 +145,7 @@ function continueShopping() {
                     <button 
                       class="qty-btn" 
                       title="Kurangi"
-                      @click="handleQuantityChange(item.id, -1)"
+                      @click="handleQuantityChange(item.key || item.id, -1)"
                     >
                       <AppIcon name="minus" :size="14" />
                     </button>
@@ -131,7 +153,7 @@ function continueShopping() {
                     <button 
                       class="qty-btn" 
                       title="Tambah"
-                      @click="handleQuantityChange(item.id, 1)"
+                      @click="handleQuantityChange(item.key || item.id, 1)"
                     >
                       <AppIcon name="plus" :size="14" />
                     </button>
@@ -139,10 +161,10 @@ function continueShopping() {
 
                   <div class="price-wrap">
                     <span class="unit-price" v-if="item.quantity > 1">
-                      {{ formatRupiah(item.price) }} / porsi
+                      {{ formatRupiah(store.lineTotal(item) / item.quantity) }} / porsi
                     </span>
                     <span class="total-line-price">
-                      {{ formatRupiah(item.price * item.quantity) }}
+                      {{ formatRupiah(store.lineTotal(item)) }}
                     </span>
                   </div>
                 </div>
@@ -199,6 +221,30 @@ function continueShopping() {
           </div>
         </div>
       </div>
+
+      <!-- Cek Status Pesanan: pelanggan yang sudah punya kode transaksi -->
+      <div class="lookup-card">
+        <div class="lookup-icon-wrap">
+          <AppIcon name="receipt" :size="28" />
+        </div>
+        <h2 class="lookup-title">Sudah Pernah Memesan?</h2>
+        <p class="lookup-subtitle">
+          Masukkan kode transaksi Anda (contoh: SK-2K9QW4Z7) untuk melihat status pesanan.
+        </p>
+        <div class="lookup-form">
+          <input
+            v-model="lookupCode"
+            type="text"
+            placeholder="Contoh: SK-2K9QW4Z7"
+            class="lookup-input font-mono"
+            @keyup.enter="lookupOrder"
+          />
+          <button type="button" class="btn-lookup" :disabled="isLookingUp" @click="lookupOrder">
+            {{ isLookingUp ? 'Mencari...' : 'Lihat Status' }}
+          </button>
+        </div>
+        <span v-if="lookupError" class="lookup-error">{{ lookupError }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -206,6 +252,95 @@ function continueShopping() {
 <style scoped>
 .cart-view {
   padding: 2.5rem 0 5rem;
+}
+
+/* ============ Cek status pesanan via kode transaksi ============ */
+.lookup-card {
+  max-width: 480px;
+  margin: 3rem auto 0;
+  padding: 2.25rem 2rem;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  text-align: center;
+  box-shadow: var(--shadow-subtle);
+}
+
+.lookup-icon-wrap {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background-color: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lookup-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  letter-spacing: -0.02em;
+  margin-bottom: 0.5rem;
+}
+
+.lookup-subtitle {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--color-text-muted);
+  margin-bottom: 1.5rem;
+}
+
+.lookup-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lookup-input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  outline: none;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lookup-input:focus {
+  border-color: var(--color-primary);
+  background-color: #FFFFFF;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.btn-lookup {
+  height: 46px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-lookup:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.lookup-error {
+  display: block;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: #C53030;
 }
 
 /* Minimal Stepper */
@@ -420,6 +555,13 @@ function continueShopping() {
 .item-meta {
   font-size: 0.78rem;
   color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.item-variants {
+  font-size: 0.78rem;
+  color: var(--color-primary);
+  font-weight: 600;
   margin-top: 2px;
 }
 
