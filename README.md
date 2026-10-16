@@ -85,4 +85,3 @@ npm run build             # production build
 ## Tim & lisensi
 
 Proyek mata kuliah Kewirausahaan (KWU), Semester 7.
-Dokumen spesifikasi internal (`PRD.md`) tidak dipublikasikan — lihat `.gitignore`.
