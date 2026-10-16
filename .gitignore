@@ -10,6 +10,11 @@
 backend/.env
 frontend/.env.local
 
+# Sesi pairing Baileys (kredensial perangkat tertaut — JANGAN commit).
+# File sesi tetap ada lokal agar tidak scan QR ulang; hanya .gitkeep yang ter-track.
+wa-gateway/auth/*
+!wa-gateway/auth/.gitkeep
+
 # Dokumen spesifikasi internal (memuat detail operasional & keamanan internal).
 # JANGAN publish ke repo publik — bagikan ke dosen/tim via dokumen privat.
 PRD.md
