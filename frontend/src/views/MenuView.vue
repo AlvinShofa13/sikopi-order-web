@@ -95,6 +95,11 @@ function confirmAddWithNote() {
 
 function quickAddToCart(item) {
   if (item.is_available === false) return
+  // Menu bervarian wajib lewat modal kustomisasi agar varian bisa dipilih.
+  if (parseVariants(item.variants).length > 0) {
+    openNoteModal(item)
+    return
+  }
   store.addToCart(item)
   showToast(`${item.name} berhasil ditambahkan`)
 }
