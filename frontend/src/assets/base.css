@@ -1,7 +1,7 @@
-/* Base CSS variables for Hayati Eatery */
+﻿/* Base CSS variables for SIKopi */
 :root {
   --color-background: var(--bg-primary);
   --color-surface: var(--bg-surface);
   --color-text: var(--color-text-main);
-  --color-border: var(--border-light);
+  --color-border: var(--border-color);
 }

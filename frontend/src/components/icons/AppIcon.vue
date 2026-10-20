@@ -253,6 +253,37 @@ defineProps({
       <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
     </g>
 
+    <!-- Star (Filled) -->
+    <g v-else-if="name === 'star'">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="currentColor" stroke="none" />
+    </g>
+
+    <!-- X / Twitter -->
+    <g v-else-if="name === 'x-twitter' || name === 'twitter'">
+      <path d="M4 4l6.5 8.5L4 20h2.5l5.2-6.5L16.5 20H20l-6.8-8.9L19.5 4H17l-4.9 6.2L7.5 4H4z" fill="currentColor" stroke="none" />
+    </g>
+
+    <!-- Instagram -->
+    <g v-else-if="name === 'instagram'">
+      <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
+    </g>
+
+    <!-- TikTok -->
+    <g v-else-if="name === 'tiktok'">
+      <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5" />
+    </g>
+
+    <!-- Coffee Mug Outline (Card illustration fallback) -->
+    <g v-else-if="name === 'coffee-cup'">
+      <path d="M17 8h1a4 4 0 1 1 0 8h-1" />
+      <path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z" />
+      <line x1="6" x2="6" y1="2" y2="4" />
+      <line x1="10" x2="10" y1="2" y2="4" />
+      <line x1="14" x2="14" y1="2" y2="4" />
+    </g>
+
     <!-- Info -->
     <g v-else>
       <circle cx="12" cy="12" r="10" />

@@ -1,33 +1,11 @@
 <script setup>
-import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
-import { api } from '@/services/api'
 import { formatRupiah } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
 const store = useOrderStore()
-
-// Cek status pesanan lama lewat kode transaksi (tanpa login).
-const lookupCode = ref('')
-const lookupError = ref('')
-const isLookingUp = ref(false)
-
-async function lookupOrder() {
-  const code = (lookupCode.value || '').trim().toUpperCase()
-  if (!code) return
-  isLookingUp.value = true
-  lookupError.value = ''
-  const res = await api.orders.getById(code)
-  isLookingUp.value = false
-  if (!res.ok) {
-    lookupError.value = res.error || 'Kode pesanan tidak ditemukan.'
-    return
-  }
-  store.handleIncomingOrder(res.data)
-  router.push(`/konfirmasi/${res.data.orderId}`)
-}
 
 function handleQuantityChange(id, change) {
   store.updateQuantity(id, change)
@@ -52,765 +30,457 @@ function continueShopping() {
 </script>
 
 <template>
-  <div class="cart-view">
-    <div class="container">
-      <!-- Breadcrumb / Minimal Stepper (NO badges) -->
-      <div class="checkout-stepper">
-        <div class="step-indicator active">
-          <span class="step-circle">1</span>
-          <span class="step-name">Daftar Pesanan</span>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step-indicator">
-          <span class="step-circle">2</span>
-          <span class="step-name">Pembayaran</span>
-        </div>
-        <div class="step-connector"></div>
-        <div class="step-indicator">
-          <span class="step-circle">3</span>
-          <span class="step-name">Nomor Pesanan</span>
-        </div>
+  <div class="cart-view-page">
+    <div class="container cart-container">
+      <!-- Breadcrumb Stepper -->
+      <div class="tuku-stepper font-mono">
+        <span class="step-badge is-current">01. PESANANMU</span>
+        <span class="step-arrow">&rarr;</span>
+        <span class="step-badge">02. PEMBAYARAN</span>
+        <span class="step-arrow">&rarr;</span>
+        <span class="step-badge">03. STATUS PESANAN</span>
       </div>
 
-      <!-- Page Header -->
-      <div class="cart-header">
-        <h1 class="page-title">Daftar Pesanan Anda</h1>
-        <p class="page-subtitle">
-          Tinjau kembali porsi dan instruksi khusus sebelum melanjutkan ke pembayaran.
+      <!-- Page Header with Display Font -->
+      <div class="cart-header-area">
+        <h1 class="heading-display cart-page-title">PESANANMU</h1>
+        <p class="cart-page-sub font-mono">
+          TINJAU KEMBALI PORSI DAN CATATAN SEBELUM KE PEMBAYARAN
         </p>
       </div>
 
       <!-- Empty Cart State -->
       <div v-if="store.cart.length === 0" class="empty-cart-card">
-        <div class="empty-icon-wrap">
-          <AppIcon name="bag" :size="36" />
+        <div class="cup-line-illustration">
+          <svg viewBox="0 0 100 100" class="empty-cup-svg">
+            <path d="M25,35 L75,35 L68,75 L32,75 Z" fill="#F0EAE1" stroke="#2C4A3E" stroke-width="3" />
+            <path d="M75,42 Q88,42 88,54 Q88,66 71,66" fill="none" stroke="#2C4A3E" stroke-width="3" />
+            <line x1="30" y1="85" x2="70" y2="85" stroke="#2C4A3E" stroke-width="4" stroke-linecap="square" />
+            <!-- Steam -->
+            <path d="M42,26 Q38,18 42,10" fill="none" stroke="#D9886A" stroke-width="2" stroke-linecap="round" />
+            <path d="M54,24 Q58,16 54,8" fill="none" stroke="#D9886A" stroke-width="2" stroke-linecap="round" />
+          </svg>
         </div>
-        <h2 class="empty-headline">Belum Ada Hidangan di Pesanan</h2>
-        <p class="empty-sub">
-          Jelajahi menu sehat organik kami untuk memulai gaya hidup seimbang hari ini.
+        <h3 class="heading-display empty-title">KERANJANG BELUM TERISI</h3>
+        <p class="empty-desc font-mono">
+          Kamu belum memilih racikan kopi atau pastry hari ini.
         </p>
-        <button class="btn-primary" @click="continueShopping">
-          <AppIcon name="arrow-left" :size="16" />
-          <span>Eksplor Pilihan Menu</span>
+        <button type="button" class="btn btn-primary" @click="continueShopping">
+          KEMBALI KE MENU &rarr;
         </button>
       </div>
 
-      <!-- Active Cart Layout -->
-      <div v-else class="cart-layout-grid">
-        <!-- Left: Items List -->
-        <div class="cart-items-section">
-          <div class="items-header">
-            <span class="items-count-text">{{ store.cartCount }} porsi hidangan</span>
-            <button class="btn-clear-cart" @click="store.clearCart" title="Kosongkan semua pesanan">
-              <span>Kosongkan</span>
-            </button>
-          </div>
+      <!-- Cart Content (Items List + Summary) -->
+      <div v-else class="cart-grid">
+        <!-- Left: Items list -->
+        <div class="cart-items-column">
+          <div 
+            v-for="item in store.cart" 
+            :key="item.id" 
+            class="cart-item-row"
+          >
+            <!-- Thumbnail square -->
+            <div class="cart-item-thumb">
+              <img 
+                :src="item.imageUrl || '/catalog-poster.svg'" 
+                :alt="item.name" 
+                class="thumb-img"
+              />
+            </div>
 
-          <div class="items-list">
-            <div v-for="item in store.cart" :key="item.key || item.id" class="cart-item-card">
-              <div class="item-visual">
-                <img :src="api.fileUrl(item.image)" :alt="item.name" class="item-thumbnail" />
+            <!-- Details -->
+            <div class="cart-item-details">
+              <div class="item-top-row">
+                <span class="item-title font-mono">{{ item.name }}</span>
+                <span class="item-subtotal font-mono">{{ formatRupiah(item.price * item.quantity) }}</span>
+              </div>
+              <div class="item-price-single font-mono">
+                {{ formatRupiah(item.price) }} / porsi
               </div>
 
-              <div class="item-details">
-                <div class="item-headline-row">
-                  <div>
-                    <h3 class="item-name">{{ item.name }}</h3>
-                    <p v-if="(item.variants || []).length > 0" class="item-variants">Varian: {{ item.variants.join(', ') }}</p>
-                    <p class="item-meta">{{ item.dietInfo }} · {{ item.calories }} kkal</p>
-                  </div>
+              <!-- Notes Input (Handwritten placeholder) -->
+              <div class="item-note-wrap">
+                <input 
+                  type="text" 
+                  :value="item.notes || ''"
+                  placeholder="Catatan khusus (misal: less ice, normal sugar)..." 
+                  class="item-note-input"
+                  @change="handleUpdateNotes(item.id, $event)"
+                />
+              </div>
+
+              <!-- Stepper & Delete -->
+              <div class="item-action-row">
+                <div class="tuku-stepper-box">
                   <button 
-                    class="btn-trash" 
-                    title="Hapus menu ini"
-                    @click="handleRemoveItem(item.key || item.id)"
+                    type="button" 
+                    class="step-btn" 
+                    @click="handleQuantityChange(item.id, -1)"
                   >
-                    <AppIcon name="trash" :size="16" />
+                    &minus;
+                  </button>
+                  <span class="step-num font-mono">{{ item.quantity }}</span>
+                  <button 
+                    type="button" 
+                    class="step-btn" 
+                    @click="handleQuantityChange(item.id, 1)"
+                  >
+                    +
                   </button>
                 </div>
 
-                <!-- Notes field -->
-                <div class="item-note-row">
-                  <input
-                    type="text"
-                    :value="item.notes"
-                    placeholder="Tambah catatan (opsional, misal: dressing dipisah)..."
-                    class="item-note-input"
-                    @input="handleUpdateNotes(item.key || item.id, $event)"
-                  />
-                </div>
-
-                <!-- Quantity & Price Row -->
-                <div class="item-pricing-row">
-                  <div class="quantity-controller">
-                    <button 
-                      class="qty-btn" 
-                      title="Kurangi"
-                      @click="handleQuantityChange(item.key || item.id, -1)"
-                    >
-                      <AppIcon name="minus" :size="14" />
-                    </button>
-                    <span class="qty-number">{{ item.quantity }}</span>
-                    <button 
-                      class="qty-btn" 
-                      title="Tambah"
-                      @click="handleQuantityChange(item.key || item.id, 1)"
-                    >
-                      <AppIcon name="plus" :size="14" />
-                    </button>
-                  </div>
-
-                  <div class="price-wrap">
-                    <span class="unit-price" v-if="item.quantity > 1">
-                      {{ formatRupiah(store.lineTotal(item) / item.quantity) }} / porsi
-                    </span>
-                    <span class="total-line-price">
-                      {{ formatRupiah(store.lineTotal(item)) }}
-                    </span>
-                  </div>
-                </div>
+                <button 
+                  type="button" 
+                  class="btn-delete-link font-mono" 
+                  @click="handleRemoveItem(item.id)"
+                >
+                  HAPUS
+                </button>
               </div>
             </div>
           </div>
 
-          <!-- Add more items action -->
-          <div class="add-more-box">
-            <button class="btn-add-more" @click="continueShopping">
-              <AppIcon name="plus" :size="16" />
-              <span>Tambah Menu Lainnya</span>
+          <div class="cart-nav-actions">
+            <button type="button" class="btn btn-outline" @click="continueShopping">
+              &larr; TAMBAH MENU LAIN
             </button>
           </div>
         </div>
 
-        <!-- Right: Order Summary -->
-        <div class="cart-summary-section">
+        <!-- Right: Summary Card -->
+        <div class="cart-summary-column">
           <div class="summary-card">
-            <h2 class="summary-title">Ringkasan Biaya</h2>
+            <h3 class="heading-display summary-title">RINGKASAN BIAYA</h3>
+            <div class="divider-line"></div>
 
-            <div class="summary-breakdown">
-              <div class="breakdown-row">
-                <span class="label">Subtotal Makanan</span>
-                <span class="val">{{ formatRupiah(store.subtotal) }}</span>
-              </div>
-
-              <div class="breakdown-row">
-                <span class="label">
-                  Kemasan Ramah Lingkungan
-                  <span class="sub-label">Serat bambu & kertas daur ulang</span>
-                </span>
-                <span class="val">{{ formatRupiah(store.ecoPackagingFee) }}</span>
-              </div>
-
-              <div class="breakdown-row">
-                <span class="label">Pajak Restoran (PB1 10%)</span>
-                <span class="val">{{ formatRupiah(store.tax) }}</span>
-              </div>
-
-              <div class="summary-divider"></div>
-
-              <div class="breakdown-total-row">
-                <span class="total-label">Total Pesanan</span>
-                <span class="total-amount">{{ formatRupiah(store.grandTotal) }}</span>
-              </div>
+            <div class="summary-line font-mono">
+              <span>TOTAL PORSI</span>
+              <span>{{ store.cartCount }} porsi</span>
             </div>
-            
-            <!-- Checkout CTA -->
-            <button class="btn-checkout" @click="proceedToCheckout">
-              <span>Lanjut ke Pembayaran</span>
-              <AppIcon name="arrow-right" :size="18" />
+            <div class="summary-line font-mono">
+              <span>SUBTOTAL HIDANGAN</span>
+              <span>{{ formatRupiah(store.cartTotal) }}</span>
+            </div>
+
+            <div class="divider-line"></div>
+
+            <div class="summary-total-line font-mono">
+              <span class="total-label">TOTAL AKHIR</span>
+              <span class="total-amount">{{ formatRupiah(store.cartTotal) }}</span>
+            </div>
+
+            <div class="tag-free-tax font-mono">
+              HARGA NETT &bull; TANPA BIAYA TERSEMBUNYI
+            </div>
+
+            <button 
+              type="button" 
+              class="btn btn-primary btn-checkout-submit" 
+              @click="proceedToCheckout"
+            >
+              LANJUT KE PEMBAYARAN &rarr;
             </button>
           </div>
         </div>
-      </div>
-
-      <!-- Cek Status Pesanan: pelanggan yang sudah punya kode transaksi -->
-      <div class="lookup-card">
-        <div class="lookup-icon-wrap">
-          <AppIcon name="receipt" :size="28" />
-        </div>
-        <h2 class="lookup-title">Sudah Pernah Memesan?</h2>
-        <p class="lookup-subtitle">
-          Masukkan kode transaksi Anda (contoh: SK-2K9QW4Z7) untuk melihat status pesanan.
-        </p>
-        <div class="lookup-form">
-          <input
-            v-model="lookupCode"
-            type="text"
-            placeholder="Contoh: SK-2K9QW4Z7"
-            class="lookup-input font-mono"
-            @keyup.enter="lookupOrder"
-          />
-          <button type="button" class="btn-lookup" :disabled="isLookingUp" @click="lookupOrder">
-            {{ isLookingUp ? 'Mencari...' : 'Lihat Status' }}
-          </button>
-        </div>
-        <span v-if="lookupError" class="lookup-error">{{ lookupError }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.cart-view {
-  padding: 2.5rem 0 5rem;
+.cart-view-page {
+  background-color: var(--color-sand);
+  min-height: calc(100vh - 54px);
+  padding: 2.5rem 0 4rem;
 }
 
-/* ============ Cek status pesanan via kode transaksi ============ */
-.lookup-card {
-  max-width: 480px;
-  margin: 3rem auto 0;
-  padding: 2.25rem 2rem;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-lg);
-  text-align: center;
-  box-shadow: var(--shadow-subtle);
+.cart-container {
+  max-width: 1080px;
 }
 
-.lookup-icon-wrap {
-  width: 60px;
-  height: 60px;
-  margin: 0 auto 1rem;
-  border-radius: 50%;
-  background-color: var(--color-primary-soft);
+/* Stepper breadcrumb */
+.tuku-stepper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.step-badge {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  background-color: var(--color-white);
+  border: 1.5px solid var(--color-primary);
   color: var(--color-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.lookup-title {
-  font-size: 1.4rem;
-  font-weight: 700;
+.step-badge.is-current {
+  background-color: var(--color-peach);
   color: var(--color-primary);
-  letter-spacing: -0.02em;
-  margin-bottom: 0.5rem;
 }
 
-.lookup-subtitle {
-  font-size: 0.88rem;
-  line-height: 1.55;
-  color: var(--color-text-muted);
-  margin-bottom: 1.5rem;
-}
-
-.lookup-form {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.lookup-input {
-  flex: 1;
-  min-width: 0;
-  height: 46px;
-  padding: 0 14px;
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-md);
-  background-color: var(--bg-primary);
-  outline: none;
-  font-size: 0.95rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.lookup-input:focus {
-  border-color: var(--color-primary);
-  background-color: #FFFFFF;
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
-}
-
-.btn-lookup {
-  height: 46px;
-  padding: 0 20px;
-  border: none;
-  border-radius: var(--radius-md);
-  background-color: var(--color-primary);
-  color: #FFFFFF;
-  font-size: 0.88rem;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.btn-lookup:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.lookup-error {
-  display: block;
-  margin-top: 0.75rem;
-  font-size: 0.8rem;
-  color: #C53030;
-}
-
-/* Minimal Stepper */
-.checkout-stepper {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 500px;
-  margin: 0 auto 2.5rem;
-}
-
-.step-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--color-text-subtle);
-  font-size: 0.85rem;
-  font-weight: 500;
-}
-
-.step-circle {
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-medium);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.78rem;
-  font-weight: 600;
-  background-color: var(--bg-surface);
-}
-
-.step-indicator.active {
+.step-arrow {
+  font-size: 14px;
+  font-weight: 800;
   color: var(--color-primary);
-  font-weight: 600;
 }
 
-.step-indicator.active .step-circle {
-  background-color: var(--color-primary);
-  color: #FFFFFF;
-  border-color: var(--color-primary);
-}
-
-.step-connector {
-  flex: 1;
-  height: 1px;
-  background-color: var(--border-light);
-  margin: 0 12px;
-}
-
-/* Page Header */
-.cart-header {
+/* Header */
+.cart-header-area {
   margin-bottom: 2rem;
 }
 
-.page-title {
-  font-size: 2rem;
-  font-weight: 700;
+.cart-page-title {
+  font-size: clamp(2.4rem, 4.2vw, 3.2rem);
   color: var(--color-primary);
-  letter-spacing: -0.02em;
-  margin-bottom: 0.35rem;
+  line-height: 1;
+  margin-bottom: 0.5rem;
 }
 
-.page-subtitle {
-  font-size: 0.92rem;
-  color: var(--color-text-muted);
+.cart-page-sub {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--color-primary-2);
+  font-weight: 700;
 }
 
-/* Empty Cart State */
+/* Empty state */
 .empty-cart-card {
+  background-color: var(--color-white);
+  border: 2px solid var(--color-primary);
+  padding: 4rem 2rem;
   text-align: center;
-  padding: 5rem 1.5rem;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  max-width: 560px;
-  margin: 2rem auto;
-}
-
-.empty-icon-wrap {
-  width: 68px;
-  height: 68px;
-  border-radius: var(--radius-full);
-  background-color: var(--bg-subtle);
-  color: var(--color-text-muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 1.5rem;
-}
-
-.empty-headline {
-  font-size: 1.3rem;
-  font-weight: 600;
-  color: var(--color-text-main);
-  margin-bottom: 0.5rem;
-}
-
-.empty-sub {
-  font-size: 0.9rem;
-  color: var(--color-text-muted);
-  margin-bottom: 2rem;
-  line-height: 1.6;
-}
-
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 24px;
-  background-color: var(--color-primary);
-  color: #FFFFFF;
-  border-radius: var(--radius-full);
-  font-size: 0.92rem;
-  font-weight: 600;
-  transition: background-color 0.2s ease;
-}
-
-.btn-primary:hover {
-  background-color: var(--color-primary-hover);
-}
-
-/* Cart Grid */
-.cart-layout-grid {
-  display: grid;
-  grid-template-columns: 1.5fr 1fr;
-  gap: 2.5rem;
-  align-items: flex-start;
-}
-
-.items-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-}
-
-.items-count-text {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--color-text-muted);
-}
-
-.btn-clear-cart {
-  font-size: 0.82rem;
-  color: var(--color-text-muted);
-  text-decoration: underline;
-  padding: 4px;
-}
-
-.btn-clear-cart:hover {
-  color: #8C4040;
-}
-
-.items-list {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  align-items: center;
+  gap: 1.25rem;
 }
 
-.cart-item-card {
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+.empty-cup-svg {
+  width: 90px;
+  height: 90px;
+}
+
+.empty-title {
+  font-size: 2rem;
+  color: var(--color-primary);
+}
+
+.empty-desc {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  max-width: 400px;
+}
+
+/* Grid */
+.cart-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+/* Items column */
+.cart-items-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.cart-item-row {
+  background-color: var(--color-white);
+  border: 2px solid var(--color-primary);
   padding: 1.25rem;
   display: flex;
   gap: 1.25rem;
-  transition: border-color 0.2s ease;
 }
 
-.cart-item-card:hover {
-  border-color: var(--border-medium);
-}
-
-.item-visual {
-  width: 90px;
-  height: 90px;
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+.cart-item-thumb {
+  width: 74px;
+  height: 74px;
   flex-shrink: 0;
-  background-color: var(--bg-subtle);
+  border: 1.5px solid var(--color-primary);
+  background-color: var(--color-sand);
+  overflow: hidden;
 }
 
-.item-thumbnail {
+.thumb-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.item-details {
+.cart-item-details {
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
-.item-headline-row {
+.item-top-row {
   display: flex;
-  align-items: flex-start;
   justify-content: space-between;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
+  align-items: baseline;
+  gap: 12px;
 }
 
-.item-name {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--color-text-main);
-  line-height: 1.3;
-}
-
-.item-meta {
-  font-size: 0.78rem;
-  color: var(--color-text-muted);
-  margin-top: 2px;
-}
-
-.item-variants {
-  font-size: 0.78rem;
+.item-title {
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
   color: var(--color-primary);
-  font-weight: 600;
-  margin-top: 2px;
 }
 
-.btn-trash {
-  color: var(--color-text-subtle);
-  padding: 6px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s ease;
+.item-subtotal {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--color-primary);
 }
 
-.btn-trash:hover {
-  color: #A34848;
+.item-price-single {
+  font-size: 11px;
+  color: var(--color-text-muted);
 }
 
-.item-note-row {
-  margin-bottom: 0.85rem;
+.item-note-wrap {
+  margin-top: 4px;
 }
 
 .item-note-input {
   width: 100%;
   padding: 6px 10px;
-  font-size: 0.82rem;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-primary);
-  outline: none;
-  transition: border-color 0.2s ease;
+  font-size: 11px;
+  border: 1.5px solid var(--color-primary);
+  background-color: #FAF7F2;
 }
 
-.item-note-input:focus {
-  border-color: var(--color-primary);
-  background-color: #FFFFFF;
-}
-
-.item-pricing-row {
+.item-action-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: auto;
+  margin-top: 8px;
 }
 
-.quantity-controller {
+.tuku-stepper-box {
   display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-full);
-  background-color: var(--bg-primary);
-  padding: 2px 4px;
+  border: 2px solid var(--color-primary);
 }
 
-.qty-btn {
-  width: 26px;
-  height: 26px;
+.step-btn {
+  width: 28px;
+  height: 28px;
+  background-color: var(--color-primary);
+  color: var(--color-cream);
+  border: none;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-main);
-  border-radius: var(--radius-full);
-  transition: background-color 0.15s ease;
 }
 
-.qty-btn:hover {
-  background-color: #FFFFFF;
-}
-
-.qty-number {
-  min-width: 24px;
-  text-align: center;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--color-text-main);
-}
-
-.price-wrap {
-  text-align: right;
-}
-
-.unit-price {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--color-text-subtle);
-}
-
-.total-line-price {
-  font-size: 1rem;
-  font-weight: 700;
+.step-btn:hover {
+  background-color: var(--color-peach);
   color: var(--color-primary);
 }
 
-.add-more-box {
-  margin-top: 1rem;
-}
-
-.btn-add-more {
-  display: inline-flex;
+.step-num {
+  min-width: 32px;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border: 1px dashed var(--border-medium);
-  border-radius: var(--radius-md);
-  font-size: 0.88rem;
-  font-weight: 500;
-  color: var(--color-primary);
-  background-color: transparent;
-  width: 100%;
   justify-content: center;
-  transition: all 0.2s ease;
+  font-size: 12px;
+  font-weight: 800;
+  background-color: var(--color-white);
+  color: var(--color-primary);
 }
 
-.btn-add-more:hover {
-  background-color: var(--bg-surface);
-  border-color: var(--color-primary);
+.btn-delete-link {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--color-status-danger);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-delete-link:hover {
+  text-decoration: underline;
+}
+
+.cart-nav-actions {
+  margin-top: 1rem;
 }
 
 /* Summary Card */
 .summary-card {
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
+  background-color: var(--color-white);
+  border: 2px solid var(--color-primary);
   padding: 1.75rem;
-  box-shadow: var(--shadow-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .summary-title {
-  font-size: 1.2rem;
-  font-weight: 700;
+  font-size: 1.6rem;
   color: var(--color-primary);
-  margin-bottom: 1.5rem;
 }
 
-.summary-breakdown {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-bottom: 1.5rem;
+.divider-line {
+  border-bottom: 2px solid var(--color-primary);
+  margin: 4px 0;
 }
 
-.breakdown-row {
+.summary-line {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  font-size: 0.9rem;
+  font-size: 12px;
+  color: var(--color-primary);
 }
 
-.label {
-  color: var(--color-text-muted);
-  display: flex;
-  flex-direction: column;
-}
-
-.sub-label {
-  font-size: 0.75rem;
-  color: var(--color-text-subtle);
-  margin-top: 2px;
-}
-
-.val {
-  font-weight: 500;
-  color: var(--color-text-main);
-}
-
-.summary-divider {
-  height: 1px;
-  background-color: var(--border-light);
-  margin: 0.5rem 0;
-}
-
-.breakdown-total-row {
+.summary-total-line {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding-top: 0.25rem;
-}
-
-.total-label {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--color-text-main);
+  align-items: baseline;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--color-primary);
+  padding: 4px 0;
 }
 
 .total-amount {
-  font-size: 1.4rem;
-  font-weight: 800;
+  font-size: 1.25rem;
   color: var(--color-primary);
-  letter-spacing: -0.02em;
 }
 
-.summary-eco-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-sm);
-  margin-bottom: 1.75rem;
-}
-
-.eco-icon {
+.tag-free-tax {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  background-color: var(--color-sage-soft);
+  border: 1.5px solid var(--color-primary);
   color: var(--color-primary);
-  margin-top: 2px;
+  text-align: center;
+  margin: 6px 0;
 }
 
-.eco-text {
-  font-size: 0.8rem;
-  line-height: 1.5;
-  color: var(--color-text-muted);
-}
-
-.btn-checkout {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
+.btn-checkout-submit {
   width: 100%;
-  padding: 14px 20px;
-  background-color: var(--color-primary);
-  color: #FFFFFF;
-  border-radius: var(--radius-full);
-  font-size: 0.95rem;
-  font-weight: 600;
-  transition: background-color 0.2s ease, transform 0.15s ease;
+  padding: 14px;
+  font-size: 13px;
+  margin-top: 6px;
 }
 
-.btn-checkout:hover {
-  background-color: var(--color-primary-hover);
-  transform: translateY(-1px);
-}
-
-@media (max-width: 900px) {
-  .cart-layout-grid {
+@media (max-width: 860px) {
+  .cart-grid {
     grid-template-columns: 1fr;
-    gap: 2rem;
-  }
-}
-
-@media (max-width: 640px) {
-  .cart-header-title {
-    font-size: 1.5rem;
-  }
-  .cart-layout-grid {
-    gap: 1.25rem;
-  }
-  .cart-item-card {
-    padding: 0.85rem;
   }
 }
 </style>
-

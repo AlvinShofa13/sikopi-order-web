@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="100%" height="100%" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="wallGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A3B32" />
+      <stop offset="60%" stop-color="#2E241E" />
+      <stop offset="100%" stop-color="#1A1512" />
+    </linearGradient>
+    <linearGradient id="counterGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C89666" />
+      <stop offset="25%" stop-color="#9C6B41" />
+      <stop offset="100%" stop-color="#5C3B1E" />
+    </linearGradient>
+    <linearGradient id="lampGlow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFEBB3" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#FFEBB3" stop-opacity="0" />
+    </linearGradient>
+    <pattern id="woodPlank" width="80" height="680" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="680" stroke="#1F1814" stroke-width="2" />
+      <line x1="80" y1="0" x2="80" y2="680" stroke="#140F0D" stroke-width="2" />
+    </pattern>
+  </defs>
+
+  <!-- Wall Background -->
+  <rect x="0" y="0" width="1200" height="680" fill="url(#wallGrad)" />
+  <rect x="0" y="0" width="1200" height="420" fill="url(#woodPlank)" opacity="0.3" />
+
+  <!-- Hanging Pendant Lamps -->
+  <!-- Lamp 1 (Left / Cashier Area) -->
+  <line x1="280" y1="0" x2="280" y2="110" stroke="#D9D0C5" stroke-width="2" />
+  <polygon points="260,140 300,140 288,110 272,110" fill="#2C4A3E" stroke="#1A1512" stroke-width="2" />
+  <circle cx="280" cy="142" r="10" fill="#FFE899" />
+  <polygon points="280,145 140,460 420,460" fill="url(#lampGlow)" opacity="0.75" />
+
+  <!-- Lamp 2 (Center / Espresso Machine) -->
+  <line x1="600" y1="0" x2="600" y2="90" stroke="#D9D0C5" stroke-width="2" />
+  <polygon points="578,125 622,125 610,90 590,90" fill="#D9886A" stroke="#1A1512" stroke-width="2" />
+  <circle cx="600" cy="127" r="11" fill="#FFE899" />
+  <polygon points="600,130 450,470 750,470" fill="url(#lampGlow)" opacity="0.85" />
+
+  <!-- Lamp 3 (Right / Pickup Area) -->
+  <line x1="940" y1="0" x2="940" y2="110" stroke="#D9D0C5" stroke-width="2" />
+  <polygon points="920,140 960,140 948,110 932,110" fill="#2C4A3E" stroke="#1A1512" stroke-width="2" />
+  <circle cx="940" cy="142" r="10" fill="#FFE899" />
+  <polygon points="940,145 800,460 1080,460" fill="url(#lampGlow)" opacity="0.75" />
+
+  <!-- Blackboard Menu on Left Wall -->
+  <rect x="80" y="70" width="220" height="150" fill="#181F1C" stroke="#7A5636" stroke-width="8" rx="0" />
+  <text x="190" y="102" fill="#EAF2ED" font-family="'Permanent Marker', cursive, sans-serif" font-size="18" text-anchor="middle">MENU HARI INI</text>
+  <line x1="100" y1="112" x2="280" y2="112" stroke="#4D6B5E" stroke-width="1.5" stroke-dasharray="4,4" />
+  <text x="102" y="132" fill="#FAF7F2" font-family="'Space Mono', monospace" font-size="10">AMERICANO APEL   Rp 1</text>
+  <text x="102" y="152" fill="#FAF7F2" font-family="'Space Mono', monospace" font-size="10">SANDWICH TELUR   Rp 1</text>
+  <text x="102" y="172" fill="#FAF7F2" font-family="'Space Mono', monospace" font-size="10">SANDWICH AYAM    Rp 1</text>
+  <text x="102" y="192" fill="#FAF7F2" font-family="'Space Mono', monospace" font-size="10">BROWNIES TUSUK   Rp 1</text>
+
+  <!-- Shelves on Center-Right Wall -->
+  <rect x="480" y="80" width="460" height="14" fill="#6A4526" stroke="#3D2513" stroke-width="2" />
+  <!-- Coffee Bags on Shelf -->
+  <g transform="translate(500, 32)">
+    <rect x="0" y="0" width="30" height="48" fill="#F0EAE1" stroke="#2C4A3E" stroke-width="2" />
+    <rect x="4" y="12" width="22" height="16" fill="#D9886A" />
+    <rect x="42" y="4" width="32" height="44" fill="#3D5A4C" stroke="#2C4A3E" stroke-width="2" />
+    <rect x="86" y="2" width="30" height="46" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="2" />
+    <circle cx="150" cy="30" r="16" fill="#F0EAE1" stroke="#2C4A3E" stroke-width="2" />
+    <circle cx="190" cy="30" r="16" fill="#F0EAE1" stroke="#2C4A3E" stroke-width="2" />
+    <circle cx="230" cy="30" r="16" fill="#D9886A" stroke="#2C4A3E" stroke-width="2" />
+  </g>
+
+  <!-- Espresso Machine (Center) -->
+  <g id="espresso-machine-gfx" transform="translate(500, 270)">
+    <rect x="0" y="20" width="190" height="110" fill="#363C40" stroke="#1D2022" stroke-width="3" />
+    <rect x="15" y="0" width="160" height="22" fill="#A4B0B8" stroke="#1D2022" stroke-width="2" />
+    <rect x="25" y="28" width="140" height="14" fill="#212629" />
+    <!-- Group heads & portafilters -->
+    <rect x="45" y="44" width="22" height="36" fill="#717D85" />
+    <rect x="115" y="44" width="22" height="36" fill="#717D85" />
+    <line x1="40" y1="80" x2="65" y2="92" stroke="#1D2022" stroke-width="4" stroke-linecap="round" />
+    <line x1="110" y1="80" x2="135" y2="92" stroke="#1D2022" stroke-width="4" stroke-linecap="round" />
+    <!-- Pressure gauges -->
+    <circle cx="85" cy="35" r="5" fill="#FFE899" stroke="#1D2022" stroke-width="1.5" />
+    <circle cx="100" cy="35" r="5" fill="#FFE899" stroke="#1D2022" stroke-width="1.5" />
+    <!-- Steam wands -->
+    <line x1="20" y1="50" x2="10" y2="100" stroke="#C3CBD0" stroke-width="3" stroke-linecap="round" />
+    <line x1="170" y1="50" x2="180" y2="100" stroke="#C3CBD0" stroke-width="3" stroke-linecap="round" />
+    <!-- Steam wisps -->
+    <path d="M56,38 Q50,22 56,10 Q62,-2 56,-14" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.65" stroke-linecap="round" />
+    <path d="M126,38 Q120,22 126,10 Q132,-2 126,-14" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.65" stroke-linecap="round" />
+  </g>
+
+  <!-- Grinder next to machine -->
+  <g transform="translate(430, 250)">
+    <polygon points="15,0 45,0 40,45 20,45" fill="#886B51" stroke="#2C1F16" stroke-width="2" />
+    <rect x="18" y="45" width="24" height="85" fill="#2C3439" stroke="#192024" stroke-width="2" />
+    <rect x="10" y="130" width="40" height="15" fill="#58636A" />
+  </g>
+
+  <!-- Pastry Glass Showcase on Left-Center -->
+  <g id="glass-case-gfx" transform="translate(180, 275)">
+    <rect x="0" y="0" width="180" height="110" fill="#E8F4F8" fill-opacity="0.35" stroke="#FFFFFF" stroke-width="2" />
+    <line x1="0" y1="55" x2="180" y2="55" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.8" />
+    <!-- Pastries inside -->
+    <path d="M25,44 Q45,28 65,44 Z" fill="#D9886A" stroke="#8A4A32" stroke-width="1.5" />
+    <path d="M85,44 Q105,28 125,44 Z" fill="#D9886A" stroke="#8A4A32" stroke-width="1.5" />
+    <rect x="30" y="85" width="45" height="16" fill="#5A3A22" stroke="#2C1B10" stroke-width="1.5" />
+    <rect x="95" y="85" width="45" height="16" fill="#E2A669" stroke="#8A5A30" stroke-width="1.5" />
+  </g>
+
+  <!-- POS Tablet / Cashier Terminal on Left Counter -->
+  <g id="pos-terminal-gfx" transform="translate(100, 315)">
+    <polygon points="12,0 58,0 52,48 6,48" fill="#1C1917" stroke="#3D5A4C" stroke-width="2" />
+    <polygon points="14,3 56,3 50,45 8,45" fill="#2C4A3E" />
+    <line x1="16" y1="12" x2="48" y2="12" stroke="#FAF7F2" stroke-width="1.5" />
+    <line x1="16" y1="20" x2="42" y2="20" stroke="#FAF7F2" stroke-width="1.5" />
+    <line x1="16" y1="28" x2="36" y2="28" stroke="#D9886A" stroke-width="2" />
+    <!-- Stand -->
+    <rect x="26" y="48" width="12" height="24" fill="#3D5A4C" />
+    <rect x="18" y="70" width="28" height="6" fill="#1C1917" />
+  </g>
+
+  <!-- Main Wooden Counter Top -->
+  <rect x="0" y="380" width="1200" height="35" fill="url(#counterGrad)" stroke="#2C1F16" stroke-width="3" />
+  <!-- Counter Front Planks -->
+  <rect x="0" y="415" width="1200" height="265" fill="#2A1E17" />
+  <g opacity="0.45">
+    <line x1="120" y1="415" x2="120" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="240" y1="415" x2="240" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="360" y1="415" x2="360" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="480" y1="415" x2="480" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="600" y1="415" x2="600" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="720" y1="415" x2="720" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="840" y1="415" x2="840" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="960" y1="415" x2="960" y2="680" stroke="#120D0A" stroke-width="2" />
+    <line x1="1080" y1="415" x2="1080" y2="680" stroke="#120D0A" stroke-width="2" />
+  </g>
+
+  <!-- Pickup Tray & Cups on Right Counter -->
+  <g transform="translate(860, 340)">
+    <!-- Wooden Tray -->
+    <rect x="0" y="32" width="190" height="12" fill="#885A35" stroke="#3D2513" stroke-width="2" />
+    <!-- Paper Cups with Tuku/SIKopi sleeve -->
+    <polygon points="20,0 44,0 40,32 24,32" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="2" />
+    <rect x="22" y="10" width="20" height="12" fill="#D9886A" />
+    <polygon points="56,0 80,0 76,32 60,32" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="2" />
+    <rect x="58" y="10" width="20" height="12" fill="#2C4A3E" />
+    <polygon points="92,0 116,0 112,32 96,32" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="2" />
+    <rect x="94" y="10" width="20" height="12" fill="#D9886A" />
+  </g>
+
+  <!-- Ambient Darkening Overlay to ensure text readability -->
+  <rect x="0" y="0" width="1200" height="680" fill="#1C2D25" fill-opacity="0.32" />
+</svg>

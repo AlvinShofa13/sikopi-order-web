@@ -1,9 +1,9 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, createToast, bundleContentsLabel, bundleSavings, parseVariants, variantExtras, variantsLabel } from '@/utils/format'
+import { formatRupiah, createToast } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -13,7 +13,6 @@ const searchQuery = ref('')
 const selectedCategory = ref('Semua')
 const activeItemForNote = ref(null)
 const itemNoteInput = ref('')
-const itemVariantsInput = ref([])
 const { toastMessage, showToast } = createToast(2600)
 
 function formatDateTime(iso) {
@@ -29,20 +28,17 @@ function formatDateTime(iso) {
 
 onMounted(async () => {
   await store.fetchMenuFromAPI()
-  store.fetchCategories()
   // Menu & keranjang terbuka untuk semua. Nama & nomor WhatsApp baru diminta
   // di halaman pembayaran, jadi pelanggan tidak perlu login/daftar dulu.
   store.fetchPublicSettings()
 })
 
-const categories = computed(() => ['Semua', ...store.categoryNames])
-
-// Bila kategori terpilih dihapus kasir, kembali ke 'Semua'.
-watch(() => store.categoryNames, (names) => {
-  if (selectedCategory.value !== 'Semua' && !names.includes(selectedCategory.value)) {
-    selectedCategory.value = 'Semua'
-  }
-})
+const categories = [
+  'Semua',
+  'Kopi Pilihan',
+  'Artisan Sandwich',
+  'Camilan Sehat'
+]
 
 const filteredItems = computed(() => {
   return store.menuItems.filter(item => {
@@ -58,48 +54,26 @@ const filteredItems = computed(() => {
   })
 })
 
-function bundleSaveInfo(item) {
-  return bundleSavings(item.bundle_items, store.menuItems, item.price)
-}
-
 function openNoteModal(item) {
   if (item.is_available === false) return
   activeItemForNote.value = item
   itemNoteInput.value = ''
-  itemVariantsInput.value = []
 }
 
 function closeNoteModal() {
   activeItemForNote.value = null
   itemNoteInput.value = ''
-  itemVariantsInput.value = []
-}
-
-function toggleModalVariant(name) {
-  const idx = itemVariantsInput.value.indexOf(name)
-  if (idx === -1) itemVariantsInput.value.push(name)
-  else itemVariantsInput.value.splice(idx, 1)
-}
-
-function modalVariantExtra() {
-  if (!activeItemForNote.value) return 0
-  return variantExtras(activeItemForNote.value, itemVariantsInput.value)
 }
 
 function confirmAddWithNote() {
   if (!activeItemForNote.value || activeItemForNote.value.is_available === false) return
-  store.addToCart(activeItemForNote.value, itemNoteInput.value, itemVariantsInput.value)
+  store.addToCart(activeItemForNote.value, itemNoteInput.value)
   showToast(`${activeItemForNote.value.name} ditambahkan ke pesanan`)
   closeNoteModal()
 }
 
 function quickAddToCart(item) {
   if (item.is_available === false) return
-  // Menu bervarian wajib lewat modal kustomisasi agar varian bisa dipilih.
-  if (parseVariants(item.variants).length > 0) {
-    openNoteModal(item)
-    return
-  }
   store.addToCart(item)
   showToast(`${item.name} berhasil ditambahkan`)
 }
@@ -211,21 +185,12 @@ function goToCart() {
             </div>
 
             <div class="card-content">
-              <h3 class="item-title">
-                {{ item.name }}
-                <span v-if="item.is_bundle" class="bundle-tag">PAKET</span>
-              </h3>
-              <p v-if="item.is_bundle" class="bundle-contents-line">Isi: {{ bundleContentsLabel(item.bundle_items, store.menuItems) }}</p>
-              <p v-if="parseVariants(item.variants).length > 0" class="variants-line">Varian: {{ variantsLabel(item.variants) }}</p>
+              <h3 class="item-title">{{ item.name }}</h3>
               <p class="item-description">{{ item.description }}</p>
 
               <div class="card-action-bar">
                 <div class="price-box">
                   <span class="price-val">{{ formatRupiah(item.price) }}</span>
-                  <template v-if="item.is_bundle && bundleSaveInfo(item).savings > 0">
-                    <span class="price-was font-mono">{{ formatRupiah(bundleSaveInfo(item).sum) }}</span>
-                    <span class="save-pill">Hemat {{ formatRupiah(bundleSaveInfo(item).savings) }}</span>
-                  </template>
                 </div>
 
                 <div class="action-buttons">
@@ -294,27 +259,6 @@ function goToCart() {
             <div class="modal-item-preview">
               <p class="modal-item-name">{{ activeItemForNote.name }}</p>
               <p class="modal-item-price">{{ formatRupiah(activeItemForNote.price) }}</p>
-            </div>
-
-            <div v-if="parseVariants(activeItemForNote.variants).length > 0" class="form-group">
-              <label class="form-label">Varian (boleh pilih lebih dari satu)</label>
-              <div class="variant-pick-list">
-                <button
-                  v-for="v in parseVariants(activeItemForNote.variants)"
-                  :key="v.name"
-                  type="button"
-                  class="variant-chip"
-                  :class="{ active: itemVariantsInput.includes(v.name) }"
-                  @click="toggleModalVariant(v.name)"
-                >
-                  <span class="variant-check">{{ itemVariantsInput.includes(v.name) ? '✓' : '' }}</span>
-                  <span>{{ v.name }}</span>
-                  <span class="variant-price">{{ v.price > 0 ? `+${formatRupiah(v.price)}` : 'Gratis' }}</span>
-                </button>
-              </div>
-              <p v-if="modalVariantExtra() > 0" class="form-hint">
-                Tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
-              </p>
             </div>
 
             <div class="form-group">
@@ -737,91 +681,6 @@ function goToCart() {
   color: var(--color-text-muted);
   margin-bottom: 1rem;
   flex: 1;
-}
-
-.bundle-tag {
-  display: inline-block;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  color: #FFFFFF;
-  background-color: var(--color-primary);
-  border-radius: var(--radius-full);
-  padding: 2px 8px;
-  margin-left: 6px;
-  vertical-align: middle;
-}
-
-.bundle-contents-line {
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: var(--color-text-main);
-  background-color: var(--color-primary-soft);
-  border-radius: var(--radius-sm);
-  padding: 6px 10px;
-  margin: 0 0 0.6rem;
-}
-
-.price-was {
-  display: block;
-  font-size: 0.75rem;
-  color: var(--color-text-subtle);
-  text-decoration: line-through;
-}
-
-.save-pill {
-  display: inline-block;
-  font-size: 0.72rem;
-  font-weight: 800;
-  color: #FFFFFF;
-  background-color: #C05621;
-  border-radius: var(--radius-full);
-  padding: 2px 9px;
-  margin-top: 4px;
-}
-
-.variants-line {
-  font-size: 0.78rem;
-  line-height: 1.5;
-  color: var(--color-text-muted);
-  margin: 0 0 0.6rem;
-}
-
-/* Pilih varian di modal catatan */
-.variant-pick-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.variant-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-full);
-  background-color: #fff;
-  font-size: 0.82rem;
-  cursor: pointer;
-}
-
-.variant-chip.active {
-  border-color: var(--color-primary);
-  background-color: var(--color-primary-soft);
-  font-weight: 700;
-}
-
-.variant-check {
-  width: 14px;
-  color: var(--color-primary);
-  font-weight: 800;
-}
-
-.variant-price {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
 }
 
 .item-prep-time {
