@@ -31,7 +31,7 @@ const isAdminPage = computed(() => route.path.startsWith('/admin'))
 
 .main-content {
   flex: 1;
-  padding-top: 72px; /* Offset for fixed navbar height */
+  padding-top: 0;
 }
 
 /* Remove padding offset for admin page since admin has its own navbar */
