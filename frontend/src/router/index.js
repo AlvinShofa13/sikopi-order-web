@@ -2,18 +2,25 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  scrollBehavior() {
+  scrollBehavior(to, from, savedPosition) {
+    if (to.hash) {
+      return { el: to.hash, behavior: 'smooth' }
+    }
+    if (savedPosition) {
+      return savedPosition
+    }
     return { top: 0 }
   },
   routes: [
     {
       path: '/',
-      redirect: '/menu'
+      name: 'home',
+      component: () => import('@/views/HomeView.vue')
     },
     {
       path: '/menu',
       name: 'menu',
-      component: () => import('@/views/MenuView.vue')
+      component: () => import('@/views/HomeView.vue')
     },
     {
       path: '/pesanan',
@@ -36,9 +43,9 @@ const router = createRouter({
       component: () => import('@/views/AdminView.vue')
     },
     {
-      // Catch-all route redirecting directly to menu
+      // Catch-all route redirecting to home
       path: '/:pathMatch(.*)*',
-      redirect: '/menu'
+      redirect: '/'
     }
   ]
 })

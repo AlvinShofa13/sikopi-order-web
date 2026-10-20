@@ -2,7 +2,6 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/services/api'
 import { compressImage } from '@/utils/imageUpload'
-import { variantExtras } from '@/utils/format'
 
 /**
  * Dinamis memperbarui ikon tab browser (favicon) sesuai konfigurasi admin SIKopi
@@ -67,32 +66,6 @@ export function generateOrderCode() {
   return `SK-${chars.join('')}`
 }
 
-// Isi paket bundling ke JSON string backend ('[{"id": "menu-x", "quantity": 2}]').
-function serializeBundleItems(raw) {
-  if (typeof raw === 'string') return raw
-  if (!Array.isArray(raw)) return ''
-  const lines = raw
-    .filter((l) => l && l.id && Number(l.quantity || l.qty || 0) > 0)
-    .map((l) => ({ id: l.id, quantity: Number(l.quantity || l.qty) }))
-  return lines.length > 0 ? JSON.stringify(lines) : ''
-}
-
-// Varian menu ke JSON string backend ('[{"name": "Es", "price": 0}]').
-function serializeVariants(raw) {
-  if (typeof raw === 'string') return raw
-  if (!Array.isArray(raw)) return ''
-  const rows = raw
-    .filter((v) => v && (v.name || '').trim())
-    .map((v) => ({ name: (v.name || '').trim(), price: Number(v.price || 0) || 0 }))
-  return rows.length > 0 ? JSON.stringify(rows) : ''
-}
-
-// Identitas baris keranjang: menu yang sama dengan varian berbeda = baris berbeda.
-function cartLineKey(id, variants = []) {
-  const names = [...(variants || [])].map((v) => String(v)).sort()
-  return `${id}::${names.join('|')}`
-}
-
 export const useOrderStore = defineStore('order', () => {
   // Menu selalu dari backend FastAPI (tampilkan skeleton selagi memuat).
   const menuItems = ref([])
@@ -107,10 +80,7 @@ export const useOrderStore = defineStore('order', () => {
         description: item.description || '',
         price: Number(item.price) || 1,
         image: item.image || '',
-        is_available: item.is_available !== false,
-        is_bundle: item.is_bundle === true,
-        bundle_items: typeof item.bundle_items === 'string' ? item.bundle_items : '',
-        variants: typeof item.variants === 'string' ? item.variants : ''
+        is_available: item.is_available !== false
       }))
     }
   }
@@ -132,10 +102,7 @@ export const useOrderStore = defineStore('order', () => {
       description: newItemData.description || '',
       price: Number(newItemData.price) || 1,
       image: newItemData.image || '',
-      is_available: newItemData.is_available !== false,
-      is_bundle: newItemData.is_bundle === true,
-      bundle_items: serializeBundleItems(newItemData.bundle_items),
-      variants: serializeVariants(newItemData.variants)
+      is_available: newItemData.is_available !== false
     }
     menuItems.value.push(item)
     api.menu.create(item)
@@ -146,20 +113,12 @@ export const useOrderStore = defineStore('order', () => {
   async function updateMenuItem(id, updatedData) {
     const idx = menuItems.value.findIndex((m) => m.id === id)
     if (idx !== -1) {
-      const bundleStr = 'bundle_items' in updatedData
-        ? serializeBundleItems(updatedData.bundle_items)
-        : menuItems.value[idx].bundle_items
-      const variantsStr = 'variants' in updatedData
-        ? serializeVariants(updatedData.variants)
-        : menuItems.value[idx].variants
       menuItems.value[idx] = {
         ...menuItems.value[idx],
         ...updatedData,
-        price: Number(updatedData.price) || menuItems.value[idx].price,
-        bundle_items: bundleStr,
-        variants: variantsStr
+        price: Number(updatedData.price) || menuItems.value[idx].price
       }
-      api.menu.update(id, { ...updatedData, bundle_items: bundleStr, variants: variantsStr })
+      api.menu.update(id, updatedData)
       broadcastChange('MENU_UPDATED', { menuId: id })
     }
   }
@@ -178,57 +137,6 @@ export const useOrderStore = defineStore('order', () => {
     return res.data.url
   }
 
-  // Kategori menu (daftar publik; ubah khusus admin)
-  const categories = ref([]) // [{ id, name }]
-
-  const categoryNames = computed(() => {
-    if (categories.value.length > 0) return categories.value.map((c) => c.name)
-    // Fallback: kategori unik dari menu (bila API belum termuat/gagal).
-    const seen = []
-    for (const m of menuItems.value) {
-      if (m.category && !seen.includes(m.category)) seen.push(m.category)
-    }
-    return seen
-  })
-
-  async function fetchCategories() {
-    const res = await api.categories.getAll()
-    if (res.ok && Array.isArray(res.data)) {
-      categories.value = res.data.map((c) => ({ id: c.id, name: c.name }))
-    }
-    return res
-  }
-
-  async function addCategory(name) {
-    const res = await api.categories.create(name)
-    if (res.ok && res.data) {
-      categories.value.push({ id: res.data.id, name: res.data.name })
-      broadcastChange('MENU_UPDATED', {})
-    }
-    return res
-  }
-
-  async function renameCategory(id, name) {
-    const res = await api.categories.update(id, name)
-    if (res.ok && res.data) {
-      const idx = categories.value.findIndex((c) => c.id === id)
-      if (idx !== -1) categories.value[idx].name = res.data.name
-      // Teks kategori pada menu ikut berubah di server: sinkronkan lokal.
-      await fetchMenuFromAPI()
-      broadcastChange('MENU_UPDATED', {})
-    }
-    return res
-  }
-
-  async function deleteCategory(id) {
-    const res = await api.categories.remove(id)
-    if (res.ok) {
-      categories.value = categories.value.filter((c) => c.id !== id)
-      broadcastChange('MENU_UPDATED', {})
-    }
-    return res
-  }
-
   // Cart state
   const cart = ref([])
 
@@ -236,11 +144,7 @@ export const useOrderStore = defineStore('order', () => {
     const savedCart = localStorage.getItem('hayati_cart')
     if (savedCart) {
       try {
-        cart.value = JSON.parse(savedCart).map((l) => ({
-          ...l,
-          variants: Array.isArray(l.variants) ? l.variants : [],
-          key: l.key || cartLineKey(l.id, l.variants)
-        }))
+        cart.value = JSON.parse(savedCart)
       } catch {
         cart.value = []
       }
@@ -253,25 +157,10 @@ export const useOrderStore = defineStore('order', () => {
     }
   }
 
-  function findCartLine(idOrKey) {
-    return cart.value.find((i) => i.key === idOrKey || i.id === idOrKey)
-  }
-
-  function menuById(id) {
-    return menuItems.value.find((m) => m.id === id)
-  }
-
-  // Total satu baris = (harga satuan + ekstra varian) x jumlah.
-  function lineTotal(line) {
-    const menu = menuById(line.id)
-    const extra = menu ? variantExtras(menu, line.variants) : 0
-    return (Number(line.price || 0) + extra) * Number(line.quantity || 0)
-  }
-
   const cartCount = computed(() => cart.value.reduce((total, item) => total + item.quantity, 0))
 
   const subtotal = computed(() =>
-    cart.value.reduce((total, item) => total + lineTotal(item), 0)
+    cart.value.reduce((total, item) => total + item.price * item.quantity, 0)
   )
 
   // Mode Pengujian: Biaya kemasan dan PB1 dibebaskan sehingga harga murni akumulasi item.
@@ -280,13 +169,11 @@ export const useOrderStore = defineStore('order', () => {
   const tax = computed(() => 0)
   const grandTotal = computed(() => subtotal.value)
 
-  function addToCart(item, notes = '', variants = []) {
+  function addToCart(item, notes = '') {
     if (item.is_available === false) {
       return // item habis tidak bisa ditambahkan
     }
-    const picked = [...(variants || [])].map((v) => String(v)).sort()
-    const key = cartLineKey(item.id, picked)
-    const existingIndex = cart.value.findIndex((i) => i.key === key)
+    const existingIndex = cart.value.findIndex((i) => i.id === item.id)
     if (existingIndex > -1) {
       cart.value[existingIndex].quantity += 1
       if (notes) {
@@ -294,7 +181,6 @@ export const useOrderStore = defineStore('order', () => {
       }
     } else {
       cart.value.push({
-        key,
         id: item.id,
         name: item.name,
         price: item.price,
@@ -303,41 +189,35 @@ export const useOrderStore = defineStore('order', () => {
         calories: item.calories,
         dietInfo: item.dietInfo,
         quantity: 1,
-        notes: notes || '',
-        variants: picked
+        notes: notes || ''
       })
     }
     persistCart()
   }
 
-  function updateQuantity(idOrKey, change) {
-    const item = findCartLine(idOrKey)
+  function updateQuantity(id, change) {
+    const item = cart.value.find((i) => i.id === id)
     if (!item) return
 
     const newQty = item.quantity + change
     if (newQty <= 0) {
-      removeFromCart(idOrKey)
+      removeFromCart(id)
     } else {
       item.quantity = newQty
       persistCart()
     }
   }
 
-  function updateItemNotes(idOrKey, notes) {
-    const item = findCartLine(idOrKey)
+  function updateItemNotes(id, notes) {
+    const item = cart.value.find((i) => i.id === id)
     if (item) {
       item.notes = notes
       persistCart()
     }
   }
 
-  function removeFromCart(idOrKey) {
-    if (cart.value.some((i) => i.key === idOrKey)) {
-      cart.value = cart.value.filter((i) => i.key !== idOrKey)
-    } else {
-      // Baris lama tanpa key (localStorage lawas): hapus per id.
-      cart.value = cart.value.filter((i) => i.id !== idOrKey)
-    }
+  function removeFromCart(id) {
+    cart.value = cart.value.filter((i) => i.id !== id)
     persistCart()
   }
 
@@ -609,8 +489,7 @@ export const useOrderStore = defineStore('order', () => {
         name: item.name,
         price: item.price,
         quantity: item.quantity,
-        notes: item.notes || '',
-        variants: item.variants || []
+        notes: item.notes || ''
       }))
       // breakdown sengaja tidak dikirim: server menghitung total dari harga menu.
     }
@@ -702,18 +581,11 @@ export const useOrderStore = defineStore('order', () => {
     updateMenuItem,
     deleteMenuItem,
     uploadMenuImage,
-    categories,
-    categoryNames,
-    fetchCategories,
-    addCategory,
-    renameCategory,
-    deleteCategory,
     addToCart,
     updateQuantity,
     updateItemNotes,
     removeFromCart,
     clearCart,
-    lineTotal,
     placeOrder,
     getOrderById,
     broadcastOrderStatusUpdate
