@@ -1,11 +1,12 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAdminStore } from '@/stores/adminStore'
 import AppIcon from '@/components/icons/AppIcon.vue'
+import AdminPosPanel from '@/components/AdminPosPanel.vue'
 import { api } from '@/services/api'
-import { formatRupiah, isCustomImage, createToast } from '@/utils/format'
+import { formatRupiah, isCustomImage, createToast, parseBundleItems, bundleContentsLabel, bundleSavings, parseVariants, variantsLabel } from '@/utils/format'
 import { orderStatusText, waLink } from '@/utils/wa'
 import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl } from '@/utils/salesAnalytics'
 import { isBluetoothSupported, printReceiptViaBluetooth, getSavedPrinterName, forgetBluetoothPrinter } from '@/utils/bluetoothPrinter'
@@ -28,7 +29,7 @@ const isPrinting = ref(false)
 const printMessage = ref('')
 const { toastMessage, toastType, showToast } = createToast()
 const copied = ref(false)
-const activeTab = ref('orders') // 'orders' | 'menus' | 'tokens' | 'analisis' | 'branding'
+const activeTab = ref('orders') // 'orders' | 'pos' | 'menus' | 'mode' | 'analisis' | 'branding'
 
 // Bluetooth printing & paper configuration
 const paperWidth = ref(32) // 32 = 58mm, 48 = 80mm
@@ -119,7 +120,7 @@ function connectWebSocket() {
           const isNew = store.handleIncomingOrder(data.order)
           if (isNew) {
             playNewOrderChime()
-            showToast(`🔔 Pesanan Baru Masuk! #${data.order.orderId} (${data.order.customer?.name || 'Pelanggan'})`, 'success')
+            showToast(`ðŸ”” Pesanan Baru Masuk! #${data.order.orderId} (${data.order.customer?.name || 'Pelanggan'})`, 'success')
           }
         } else if (data.event === 'STATUS_UPDATED' && data.order) {
           const idx = store.orderHistory.findIndex(o => o.orderId === data.order.orderId)
@@ -160,7 +161,7 @@ async function syncRealtimeOrders() {
   const newCount = store.orderHistory.length
   if (prevOrderCount > 0 && newCount > prevOrderCount) {
     playNewOrderChime()
-    showToast('🔔 Pesanan Baru Masuk!', 'success')
+    showToast('ðŸ”” Pesanan Baru Masuk!', 'success')
   }
   prevOrderCount = newCount
 }
@@ -187,6 +188,7 @@ onMounted(() => {
   savedPrinterName.value = getSavedPrinterName()
   if (adminStore.isAuthenticated) {
     store.fetchMenuFromAPI()
+    store.fetchCategories()
     store.refreshOrdersFromDB()
     fetchModeSettings()
     refreshWaStatus()
@@ -364,6 +366,25 @@ async function refreshWaStatus() {
   }
 }
 
+// Lepas sesi WA yang sudah pairing dari panel admin (tanpa buka WA di HP)
+const isReleasingWa = ref(false)
+
+async function releaseWaSession() {
+  if (isReleasingWa.value) return
+  if (!confirm('Lepas sesi WhatsApp yang terhubung? Nomor pengirim saat ini terputus dan perlu scan QR ulang.')) return
+  isReleasingWa.value = true
+  try {
+    const res = await api.wa.release()
+    if (!res.ok) throw new Error(res.error || 'Gagal melepas sesi WhatsApp.')
+    showToast('Sesi WhatsApp dilepas. QR baru muncul otomatis untuk scan ulang.', 'success')
+    await refreshWaStatus()
+  } catch (err) {
+    showToast(err.message || 'Gagal melepas sesi WhatsApp.', 'error')
+  } finally {
+    isReleasingWa.value = false
+  }
+}
+
 async function createBatch() {
   if (!batchForm.value.name.trim()) {
     showToast('Nama batch wajib diisi.', 'error')
@@ -442,7 +463,7 @@ function sendWaStatus(order, status) {
 
 const isSendingReceipt = ref(false)
 
-// Kirim nota digital langsung via gateway — tanpa membuka wa.me.
+// Kirim nota digital langsung via gateway â€” tanpa membuka wa.me.
 async function sendWaReceipt(order) {
   if (!order || isSendingReceipt.value) return
   isSendingReceipt.value = true
@@ -607,9 +628,17 @@ function openAddMenuModal() {
     description: '',
     price: 1,
     image: 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=700&auto=format&fit=crop&q=80',
-    is_available: true
+    is_available: true,
+    is_bundle: false,
+    bundle_items: [],
+    variants: []
   }
   showMenuModal.value = true
+}
+
+function openBundleModal() {
+  openAddMenuModal()
+  menuForm.value.is_bundle = true
 }
 
 function openEditMenuModal(item) {
@@ -623,14 +652,30 @@ function openEditMenuModal(item) {
     description: item.description,
     price: item.price,
     image: item.image,
-    is_available: item.is_available !== false
+    is_available: item.is_available !== false,
+    is_bundle: item.is_bundle === true,
+    bundle_items: parseBundleItems(item.bundle_items),
+    variants: parseVariants(item.variants)
   }
   showMenuModal.value = true
+}
+
+function addMenuVariant() {
+  if (!Array.isArray(menuForm.value.variants)) menuForm.value.variants = []
+  menuForm.value.variants.push({ name: '', price: 0 })
+}
+
+function removeMenuVariant(idx) {
+  menuForm.value.variants.splice(idx, 1)
 }
 
 async function saveMenuForm() {
   if (!menuForm.value.name.trim()) {
     showToast('Nama menu wajib diisi.', 'error')
+    return
+  }
+  if (menuForm.value.is_bundle && (menuForm.value.bundle_items || []).length === 0) {
+    showToast('Paket bundling wajib berisi minimal 1 menu.', 'error')
     return
   }
 
@@ -645,8 +690,46 @@ async function saveMenuForm() {
   showMenuModal.value = false
 }
 
-async function handleToggleAvailability(menuId, currentStatus) {
-  await store.toggleMenuAvailability(menuId)
+// ---- Builder paket bundling di form menu ----
+const bundleCandidates = computed(() =>
+  menuItems.value.filter(m => m.id !== menuForm.value.id && m.is_bundle !== true)
+)
+
+function bundleLineQty(menuId) {
+  const line = (menuForm.value.bundle_items || []).find(l => l.id === menuId)
+  return line ? Number(line.quantity || 0) : 0
+}
+
+function setBundleLineQty(menuId, qty) {
+  const lines = Array.isArray(menuForm.value.bundle_items) ? [...menuForm.value.bundle_items] : []
+  const idx = lines.findIndex(l => l.id === menuId)
+  const q = Math.max(0, Number(qty) || 0)
+  if (q <= 0) {
+    if (idx !== -1) lines.splice(idx, 1)
+  } else if (idx !== -1) {
+    lines[idx] = { ...lines[idx], quantity: q }
+  } else {
+    lines.push({ id: menuId, quantity: q })
+  }
+  menuForm.value.bundle_items = lines
+}
+
+const bundleContentsSum = computed(() => {
+  const byId = new Map(menuItems.value.map(m => [m.id, Number(m.price) || 0]))
+  return (menuForm.value.bundle_items || []).reduce(
+    (sum, l) => sum + (byId.get(l.id) || 0) * Number(l.quantity || 0), 0
+  )
+})
+
+function useBundleSumAsPrice() {
+  menuForm.value.price = bundleContentsSum.value
+}
+
+function bundleSaveInfo(item) {
+  return bundleSavings(item.bundle_items, menuItems.value, item.price)
+}
+
+async function handleToggleAvailability(menuId, currentStatus) {  await store.toggleMenuAvailability(menuId)
   const newStatus = !currentStatus
   showToast(`Status menu diubah menjadi: ${newStatus ? 'Tersedia' : 'Habis'}`)
 }
@@ -656,6 +739,66 @@ async function handleDeleteMenu(item) {
     await store.deleteMenuItem(item.id)
     showToast(`Menu "${item.name}" berhasil dihapus.`)
   }
+}
+
+// ---- CRUD kategori menu ----
+const newCategoryName = ref('')
+const editingCategoryId = ref(null)
+const editingCategoryName = ref('')
+
+function categoryMenuCount(name) {
+  return menuItems.value.filter(m => m.category === name).length
+}
+
+async function handleAddCategory() {
+  const name = (newCategoryName.value || '').trim()
+  if (!name) {
+    showToast('Nama kategori wajib diisi.', 'error')
+    return
+  }
+  const res = await store.addCategory(name)
+  if (!res.ok) {
+    showToast(res.error || 'Gagal menambah kategori.', 'error')
+    return
+  }
+  newCategoryName.value = ''
+  showToast(`Kategori "${res.data.name}" ditambahkan.`)
+}
+
+function startRenameCategory(cat) {
+  editingCategoryId.value = cat.id
+  editingCategoryName.value = cat.name
+}
+
+function cancelRenameCategory() {
+  editingCategoryId.value = null
+  editingCategoryName.value = ''
+}
+
+async function handleRenameCategory(id) {
+  const name = (editingCategoryName.value || '').trim()
+  if (!name) {
+    showToast('Nama kategori wajib diisi.', 'error')
+    return
+  }
+  const res = await store.renameCategory(id, name)
+  if (!res.ok) {
+    showToast(res.error || 'Gagal mengubah kategori.', 'error')
+    return
+  }
+  cancelRenameCategory()
+  showToast(`Kategori diubah menjadi "${res.data.name}".`)
+}
+
+async function handleDeleteCategory(cat) {
+  const n = categoryMenuCount(cat.name)
+  if (!confirm(`Hapus kategori "${cat.name}"?${n > 0 ? ` Masih dipakai ${n} menu â€” penghapusan akan ditolak.` : ''}`)) return
+  const res = await store.deleteCategory(cat.id)
+  if (!res.ok) {
+    showToast(res.error || 'Gagal menghapus kategori.', 'error')
+    return
+  }
+  showToast(`Kategori "${cat.name}" dihapus.`)
 }
 
 // Payment Status Update (persist ke backend; realtime via WS STATUS_UPDATED)
@@ -676,7 +819,7 @@ async function markOrderAsPaid(order) {
   }
 }
 
-// Kembalikan status lunas ke belum bayar (koreksi kasir — bisa diubah-ubah manual).
+// Kembalikan status lunas ke belum bayar (koreksi kasir â€” bisa diubah-ubah manual).
 async function revertPaidStatus(order) {
   if (!order || !order.payment?.paid) return
   if (!confirm(`Kembalikan pesanan #${order.orderId} ke "Menunggu Pembayaran"?`)) return
@@ -1076,6 +1219,14 @@ async function handleResetBranding() {
             <button
               type="button"
               class="nav-tab-btn"
+              :class="{ active: activeTab === 'pos' }"
+              @click="activeTab = 'pos'"
+            >
+              <span>POS Kasir</span>
+            </button>
+            <button
+              type="button"
+              class="nav-tab-btn"
               :class="{ active: activeTab === 'mode' }"
               @click="activeTab = 'mode'"
             >
@@ -1117,7 +1268,7 @@ async function handleResetBranding() {
               <span class="dot-pulse"></span>
               <span>MODE PEMESANAN AKTIF</span>
             </div>
-            <span class="token-notice">Hanya satu mode yang aktif — customer tidak memilih</span>
+            <span class="token-notice">Hanya satu mode yang aktif â€” customer tidak memilih</span>
           </div>
 
           <div class="mode-segmented" role="tablist" aria-label="Mode pemesanan">
@@ -1141,7 +1292,7 @@ async function handleResetBranding() {
               @click="switchMode('preorder')"
             >
               <AppIcon name="clock" :size="16" />
-              <span>Open PO {{ store.activeBatch?.name ? `— ${store.activeBatch.name}` : '' }}</span>
+              <span>Open PO {{ store.activeBatch?.name ? `â€” ${store.activeBatch.name}` : '' }}</span>
             </button>
           </div>
 
@@ -1150,7 +1301,7 @@ async function handleResetBranding() {
             pembayaran memasukkan nama + nomor WhatsApp.
             <template v-if="store.activeMode === 'preorder'">
               Pada mode <strong>Open PO</strong> pesanan hanya tercatat setelah bukti pembayaran
-              diunggah, dan masuk otomatis ke batch <strong>{{ store.activeBatch?.name || '—' }}</strong>.
+              diunggah, dan masuk otomatis ke batch <strong>{{ store.activeBatch?.name || 'â€”' }}</strong>.
             </template>
             <template v-else>
               Pada mode <strong>On-site</strong> pesanan langsung tercatat; bayar di kasir atau
@@ -1173,7 +1324,7 @@ async function handleResetBranding() {
                     Scan QR dengan nomor WA khusus pengirim (Perangkat Tertaut).
                   </template>
                   <template v-else>
-                    Menunggu gateway wa-gateway… pastikan service berjalan.
+                    Menunggu gateway wa-gatewayâ€¦ pastikan service berjalan.
                   </template>
                 </span>
               </div>
@@ -1189,6 +1340,19 @@ async function handleResetBranding() {
                   <span>Muat Ulang QR</span>
                 </button>
               </div>
+            </div>
+            <div v-if="store.waConnected" class="wa-release-row">
+              <button
+                type="button"
+                class="btn-act btn-cancel-order"
+                :disabled="isReleasingWa"
+                title="Putuskan nomor WA yang terpairing â€” perlu scan QR ulang, tanpa buka WhatsApp di HP"
+                @click="releaseWaSession"
+              >
+                <AppIcon name="close" :size="14" />
+                <span>{{ isReleasingWa ? 'Melepasâ€¦' : 'Lepas Sesi WA' }}</span>
+              </button>
+              <span class="wa-release-hint">Melepas nomor yang terpairing. QR baru muncul otomatis untuk scan ulang.</span>
             </div>
           </div>
         </section>
@@ -1404,6 +1568,17 @@ async function handleResetBranding() {
           </div>
         </section>
 
+        <!-- ================= TAB: POS KASIR (pesan langsung, lunas tunai) ================= -->
+        <section v-if="activeTab === 'pos'" class="content-section-card">
+          <div class="section-top-bar">
+            <div>
+              <h2 class="section-title">POS Kasir</h2>
+              <span class="section-subtitle">Buat pesanan langsung di kasir â€” tunai & lunas seketika, tanpa lewat web</span>
+            </div>
+          </div>
+          <AdminPosPanel :show-toast="showToast" />
+        </section>
+
         <!-- ================= TAB 2: MENU MANAGEMENT ================= -->
         <section v-if="activeTab === 'menus'" class="content-section-card">
           <div class="section-top-bar">
@@ -1412,10 +1587,67 @@ async function handleResetBranding() {
               <span class="section-subtitle">Edit harga, tambah menu baru, atau ubah status Tersedia / Habis</span>
             </div>
 
-            <button type="button" class="btn-primary-action" @click="openAddMenuModal">
-              <AppIcon name="plus" :size="16" />
-              <span>Tambah Menu Baru</span>
-            </button>
+            <div class="menu-header-actions">
+              <button type="button" class="btn-primary-action" @click="openAddMenuModal">
+                <AppIcon name="plus" :size="16" />
+                <span>Tambah Menu Baru</span>
+              </button>
+              <button type="button" class="btn-primary-action btn-bundle-action" @click="openBundleModal">
+                <AppIcon name="bag" :size="16" />
+                <span>Buat Paket Bundling</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Kelola kategori menu -->
+          <div class="category-manager-card">
+            <span class="cat-man-title">Kategori Menu</span>
+            <div class="cat-man-add">
+              <input
+                v-model="newCategoryName"
+                type="text"
+                placeholder="Nama kategori baruâ€¦"
+                class="form-input"
+                @keyup.enter="handleAddCategory"
+              />
+              <button type="button" class="btn-primary-action" @click="handleAddCategory">
+                <AppIcon name="plus" :size="14" />
+                <span>Tambah</span>
+              </button>
+            </div>
+            <div class="cat-man-list">
+              <div v-for="cat in store.categories" :key="cat.id" class="cat-man-row">
+                <template v-if="editingCategoryId === cat.id">
+                  <input
+                    v-model="editingCategoryName"
+                    type="text"
+                    class="form-input"
+                    @keyup.enter="handleRenameCategory(cat.id)"
+                  />
+                  <button type="button" class="btn-act btn-print" @click="handleRenameCategory(cat.id)">
+                    <AppIcon name="check" :size="13" />
+                    <span>Simpan</span>
+                  </button>
+                  <button type="button" class="btn-act btn-cancel-order" @click="cancelRenameCategory">
+                    <AppIcon name="close" :size="13" />
+                    <span>Batal</span>
+                  </button>
+                </template>
+                <template v-else>
+                  <span class="cat-man-name">{{ cat.name }}</span>
+                  <span class="cat-man-count">{{ categoryMenuCount(cat.name) }} menu</span>
+                  <button type="button" class="btn-act btn-print" @click="startRenameCategory(cat)">
+                    <AppIcon name="sparkles" :size="13" />
+                    <span>Ubah</span>
+                  </button>
+                  <button type="button" class="btn-act btn-cancel-order" @click="handleDeleteCategory(cat)">
+                    <AppIcon name="trash" :size="13" />
+                    <span>Hapus</span>
+                  </button>
+                </template>
+              </div>
+              <p v-if="store.categories.length === 0" class="cat-man-empty">Belum ada kategori.</p>
+            </div>
           </div>
 
           <div class="menu-admin-grid">
@@ -1437,9 +1669,18 @@ async function handleResetBranding() {
 
               <div class="card-details">
                 <div class="menu-cat-tag">{{ item.category }}</div>
-                <h3 class="menu-item-name">{{ item.name }}</h3>
+                <h3 class="menu-item-name">
+                  {{ item.name }}
+                  <span v-if="item.is_bundle" class="bundle-tag">PAKET</span>
+                </h3>
+                <p v-if="item.is_bundle" class="bundle-contents-line">Isi: {{ bundleContentsLabel(item.bundle_items, menuItems) }}</p>
+                <p v-if="parseVariants(item.variants).length > 0" class="variants-admin-line">Varian: {{ variantsLabel(item.variants) }}</p>
                 <p class="menu-item-desc">{{ item.description }}</p>
                 <div class="menu-price-tag font-mono">{{ formatRupiah(item.price) }}</div>
+                <div v-if="item.is_bundle && bundleSaveInfo(item).savings > 0" class="bundle-save-row">
+                  <span class="bundle-was font-mono">{{ formatRupiah(bundleSaveInfo(item).sum) }}</span>
+                  <span class="bundle-save-pill">Hemat {{ formatRupiah(bundleSaveInfo(item).savings) }}</span>
+                </div>
 
                 <!-- Availability Toggle Switch (ON / OFF) -->
                 <div class="toggle-availability-row">
@@ -1448,7 +1689,7 @@ async function handleResetBranding() {
                     type="button" 
                     class="btn-switch-toggle"
                     :class="item.is_available !== false ? 'switch-on' : 'switch-off'"
-                    :title="item.is_available !== false ? 'Status ON (Tersedia) — Klik untuk ubah ke OFF' : 'Status OFF (Habis) — Klik untuk ubah ke ON'"
+                    :title="item.is_available !== false ? 'Status ON (Tersedia) â€” Klik untuk ubah ke OFF' : 'Status OFF (Habis) â€” Klik untuk ubah ke ON'"
                     @click="handleToggleAvailability(item.id, item.is_available)"
                   >
                     <span class="switch-ball"></span>
@@ -1497,7 +1738,7 @@ async function handleResetBranding() {
                   id="batch-name"
                   v-model="batchForm.name"
                   type="text"
-                  placeholder="Contoh: Batch 3 — Jumat 12 Des"
+                  placeholder="Contoh: Batch 3 â€” Jumat 12 Des"
                   class="text-input-batch"
                 />
               </div>
@@ -1532,7 +1773,7 @@ async function handleResetBranding() {
           <!-- Peringatan: gateway WA putus -->
           <div v-if="!store.waConnected" class="tokens-intro-banner warn">
             <AppIcon name="phone" :size="18" />
-            <span><strong>WhatsApp otomatis mati.</strong> Notifikasi pesanan tidak terkirim sampai gateway terhubung (scan QR di kartu atas) — tombol kirim manual tetap bisa dipakai.</span>
+            <span><strong>WhatsApp otomatis mati.</strong> Notifikasi pesanan tidak terkirim sampai gateway terhubung (scan QR di kartu atas) â€” tombol kirim manual tetap bisa dipakai.</span>
           </div>
 
           <!-- Daftar batch -->
@@ -1608,7 +1849,7 @@ async function handleResetBranding() {
                     <div class="rank-bar">
                       <div class="rank-bar-fill" :style="{ width: ((m.qty / topMenuMaxQty) * 100).toFixed(1) + '%' }"></div>
                     </div>
-                    <div class="rank-sub font-mono">{{ formatRupiah(m.revenue) }} · {{ m.orders }} pesanan</div>
+                    <div class="rank-sub font-mono">{{ formatRupiah(m.revenue) }} Â· {{ m.orders }} pesanan</div>
                   </div>
                 </li>
               </ol>
@@ -1700,7 +1941,7 @@ async function handleResetBranding() {
                     <div class="mock-new-tab">+</div>
                   </div>
                   <div class="browser-address-bar">
-                    <span class="mock-lock">🔒</span>
+                    <span class="mock-lock">ðŸ”’</span>
                     <span class="mock-url">https://sikopi.local/menu</span>
                   </div>
                 </div>
@@ -1726,7 +1967,7 @@ async function handleResetBranding() {
                   <div class="navbar-mock-right">
                     <span class="mock-nav-pill">Pilihan Menu</span>
                     <span class="mock-nav-pill">Daftar Pesanan</span>
-                    <span class="mock-nav-cart">🛒 0</span>
+                    <span class="mock-nav-cart">ðŸ›’ 0</span>
                   </div>
                 </div>
               </div>
@@ -1863,7 +2104,7 @@ async function handleResetBranding() {
               <span>
                 Status aktif: 
                 <strong>{{ isCustomImage(brandingForm.icon) ? 'Logo Gambar Kustom' : brandingForm.icon === 'leaf' ? 'Daun Organik (Default)' : brandingForm.icon }}</strong>
-                — Brand: <strong>{{ brandingForm.name || 'SIKopi' }}</strong>
+                â€” Brand: <strong>{{ brandingForm.name || 'SIKopi' }}</strong>
               </span>
             </div>
             <div class="footer-action-buttons">
@@ -1918,7 +2159,7 @@ async function handleResetBranding() {
                 <span class="lbl">Mode Pesanan:</span>
                 <span>
                   <strong>{{ selectedOrder.channel === 'preorder' ? 'Open PO' : 'On-site' }}</strong>
-                  <template v-if="selectedOrder.batch?.name"> · Batch {{ selectedOrder.batch.name }}</template>
+                  <template v-if="selectedOrder.batch?.name"> Â· Batch {{ selectedOrder.batch.name }}</template>
                 </span>
               </div>
               <div class="meta-line">
@@ -1963,7 +2204,7 @@ async function handleResetBranding() {
                   @click="markOrderAsPaid(selectedOrder)"
                 >
                   <AppIcon name="check" :size="18" />
-                  <span>Bukti Sesuai — Tandai Lunas</span>
+                  <span>Bukti Sesuai â€” Tandai Lunas</span>
                 </button>
                 <button
                   v-else
@@ -1982,24 +2223,47 @@ async function handleResetBranding() {
                   @click="sendWaReceipt(selectedOrder)"
                 >
                   <AppIcon name="phone" :size="14" />
-                  <span>{{ isSendingReceipt ? 'Mengirim…' : 'Kirim Nota Digital' }}</span>
+                  <span>{{ isSendingReceipt ? 'Mengirimâ€¦' : 'Kirim Nota Digital' }}</span>
                 </button>
               </div>
             </div>
 
             <!-- Dynamic QRIS Kasir: metode QRIS legacy, atau tab QRIS pada order cash -->
             <div v-else-if="selectedOrder.payment?.method === 'qris' || (selectedOrder.payment?.method === 'cash' && cashPayTab === 'qris' && !selectedOrder.payment?.proof)" class="qris-cashier-card">
+              <!-- Tab Tunai/QRIS juga tampil di kartu QRIS agar kasir bisa kembali ke Tunai -->
+              <div v-if="selectedOrder.payment?.method === 'cash'" class="mode-segmented" role="tablist" aria-label="Metode bayar di kasir">
+                <button
+                  type="button"
+                  role="tab"
+                  class="mode-seg-btn"
+                  :class="{ active: cashPayTab === 'tunai' }"
+                  @click="cashPayTab = 'tunai'"
+                >
+                  <AppIcon name="cash" :size="15" />
+                  <span>Uang Tunai</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  class="mode-seg-btn"
+                  :class="{ active: cashPayTab === 'qris' }"
+                  @click="cashPayTab = 'qris'"
+                >
+                  <AppIcon name="qr-code" :size="15" />
+                  <span>QRIS Dinamis</span>
+                </button>
+              </div>
               <div class="qris-cashier-header">
                 <div class="qris-title-group">
                   <AppIcon name="qr-code" :size="22" class="qris-icon" />
                   <div>
-                    <h4 class="qris-title">QRIS — Scan untuk Bayar</h4>
+                    <h4 class="qris-title">QRIS â€” Scan untuk Bayar</h4>
                     <p class="qris-subtitle">BCA, Mandiri, BRI, BNI, GoPay, OVO, ShopeePay, Dana, LinkAja</p>
                   </div>
                 </div>
                 <div class="qris-merchant-pill">
                   <span class="merchant-name-text">AZRIEL SABIQ GAMING GEAR</span>
-                  <span class="nmid-mini-text font-mono">NMID: ID1026528966314 · A01</span>
+                  <span class="nmid-mini-text font-mono">NMID: ID1026528966314 Â· A01</span>
                 </div>
               </div>
 
@@ -2211,7 +2475,7 @@ async function handleResetBranding() {
               </div>
               <p class="prep-control-sub">
                 Mengubah status langsung tersinkron ke halaman status pelanggan. Untuk memberi kabar
-                lewat WhatsApp, pakai tombol di bawah — WhatsApp terbuka dengan pesan sudah terisi,
+                lewat WhatsApp, pakai tombol di bawah â€” WhatsApp terbuka dengan pesan sudah terisi,
                 tinggal tekan <strong>Kirim</strong>.
               </p>
               <div class="prep-pill-group">
@@ -2330,7 +2594,7 @@ async function handleResetBranding() {
                   <p>Silakan sobek kertas struk dapur. Struk 2 (Pelanggan) akan dicetak dalam {{ tearCountdown }}s.</p>
                 </div>
                 <button type="button" class="btn-tear-now" @click="confirmTearAndContinue">
-                  <span>Sudah Disobek · Cetak Struk Pelanggan Sekarang</span>
+                  <span>Sudah Disobek Â· Cetak Struk Pelanggan Sekarang</span>
                 </button>
               </div>
 
@@ -2386,7 +2650,7 @@ async function handleResetBranding() {
       <div v-if="showMenuModal" class="modal-backdrop" @click.self="showMenuModal = false">
         <div class="menu-form-card">
           <div class="modal-header">
-            <h3 class="modal-title">{{ isEditingMenu ? 'Edit Menu Hidangan' : 'Tambah Menu Baru' }}</h3>
+            <h3 class="modal-title">{{ isEditingMenu ? (menuForm.is_bundle ? 'Edit Paket Bundling' : 'Edit Menu Hidangan') : (menuForm.is_bundle ? 'Buat Paket Bundling' : 'Tambah Menu Baru') }}</h3>
             <button type="button" class="btn-detail-close" @click="showMenuModal = false">
               <AppIcon name="close" :size="18" />
             </button>
@@ -2401,9 +2665,7 @@ async function handleResetBranding() {
               <div class="form-group">
                 <label class="form-label" for="menu-category">Kategori Menu *</label>
                 <select id="menu-category" v-model="menuForm.category" class="form-select">
-                  <option value="Kopi Pilihan">Kopi Pilihan</option>
-                  <option value="Artisan Sandwich">Artisan Sandwich</option>
-                  <option value="Camilan Sehat">Camilan Sehat</option>
+                  <option v-for="name in store.categoryNames" :key="name" :value="name">{{ name }}</option>
                 </select>
               </div>
             </div>
@@ -2425,6 +2687,63 @@ async function handleResetBranding() {
             <div class="form-group">
               <label class="form-label" for="menu-desc">Deskripsi Bahan & Rasa</label>
               <textarea id="menu-desc" v-model="menuForm.description" rows="2" class="form-textarea"></textarea>
+            </div>
+
+            <!-- Paket bundling: satu nama + satu harga untuk beberapa menu -->
+            <div class="form-group">
+              <label class="bundle-check-row">
+                <input type="checkbox" v-model="menuForm.is_bundle" />
+                <span>Jadikan <strong>paket bundling</strong> (satu harga untuk beberapa menu)</span>
+              </label>
+            </div>
+
+            <div v-if="menuForm.is_bundle" class="bundle-builder-card">
+              <span class="form-label">Isi Paket (jumlah &gt; 0 = ikut paket)</span>
+              <div v-if="bundleCandidates.length === 0" class="bundle-empty">
+                Belum ada menu satuan untuk dijadikan isi paket.
+              </div>
+              <div v-else class="bundle-lines">
+                <div v-for="cand in bundleCandidates" :key="cand.id" class="bundle-line">
+                  <span class="bundle-line-name">
+                    {{ cand.name }}
+                    <em class="font-mono">{{ formatRupiah(cand.price) }}</em>
+                  </span>
+                  <div class="bundle-qty-ctrl">
+                    <button type="button" class="bundle-qty-btn" @click="setBundleLineQty(cand.id, bundleLineQty(cand.id) - 1)">âˆ’</button>
+                    <span class="bundle-qty-num">{{ bundleLineQty(cand.id) }}</span>
+                    <button type="button" class="bundle-qty-btn" @click="setBundleLineQty(cand.id, bundleLineQty(cand.id) + 1)">+</button>
+                  </div>
+                </div>
+              </div>
+              <div class="bundle-sum-row">
+                <span>Total harga isi: <strong class="font-mono">{{ formatRupiah(bundleContentsSum) }}</strong></span>
+                <span v-if="bundleContentsSum - (Number(menuForm.price) || 0) > 0" class="bundle-save-live">
+                  Hemat: <strong class="font-mono">{{ formatRupiah(bundleContentsSum - (Number(menuForm.price) || 0)) }}</strong>
+                </span>
+                <button type="button" class="btn-action-text" @click="useBundleSumAsPrice">
+                  <span>Pakai total isi sebagai harga paket</span>
+                </button>
+              </div>
+              <p class="bundle-hint">Harga paket bebas diatur sendiri (boleh lebih murah dari total isi). Isi paket tercatat otomatis di setiap pesanan.</p>
+            </div>
+
+            <!-- Varian menu: pilihan + biaya tambahan opsional -->
+            <div class="form-group">
+              <span class="form-label">Varian Menu (opsional)</span>
+              <div v-if="(menuForm.variants || []).length === 0" class="variant-empty">
+                Belum ada varian. Tambahkan bila menu ini punya pilihan â€” mis. "Es" gratis atau "Extra Shot" +Rp5.000.
+              </div>
+              <div v-for="(v, idx) in (menuForm.variants || [])" :key="idx" class="variant-edit-row">
+                <input v-model="v.name" type="text" placeholder="Nama varian (mis. Es)" class="form-input" />
+                <input v-model.number="v.price" type="number" min="0" step="500" placeholder="Biaya (0 = gratis)" class="form-input font-mono" />
+                <button type="button" class="btn-preview-action btn-remove" @click="removeMenuVariant(idx)" title="Hapus varian">
+                  <AppIcon name="close" :size="13" />
+                </button>
+              </div>
+              <button type="button" class="btn-action-text" @click="addMenuVariant">
+                <AppIcon name="plus" :size="13" />
+                <span>Tambah Varian</span>
+              </button>
             </div>
 
             <!-- Input Gambar: Bisa upload file ke backend & bisa input URL -->
@@ -3116,6 +3435,16 @@ async function handleResetBranding() {
   color: var(--color-text-muted);
 }
 
+.menu-header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-bundle-action {
+  background-color: #C05621;
+}
+
 .header-actions {
   display: inline-flex;
   align-items: center;
@@ -3447,6 +3776,70 @@ async function handleResetBranding() {
   gap: 1.5rem;
 }
 
+/* Kelola kategori menu */
+.category-manager-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  padding: 1rem 1.15rem;
+  margin-bottom: 1.5rem;
+}
+
+.cat-man-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-text-main);
+}
+
+.cat-man-add {
+  display: flex;
+  gap: 8px;
+  margin: 0.7rem 0;
+}
+
+.cat-man-add .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cat-man-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.cat-man-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+}
+
+.cat-man-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.cat-man-name {
+  flex: 1;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.cat-man-count {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.cat-man-empty {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
 .menu-admin-card {
   background-color: var(--bg-primary);
   border: 1px solid var(--border-medium);
@@ -3530,6 +3923,179 @@ async function handleResetBranding() {
   font-weight: 700;
   color: var(--color-primary);
   margin-bottom: 1rem;
+}
+
+.bundle-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #FFFFFF;
+  background-color: var(--color-primary);
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.bundle-contents-line {
+  font-size: 0.78rem;
+  color: var(--color-text-main);
+  background-color: var(--color-primary-soft);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  margin: 0 0 0.6rem;
+  line-height: 1.45;
+}
+
+/* Builder paket bundling di modal menu */
+.bundle-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.bundle-check-row input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--color-primary);
+}
+
+.bundle-builder-card {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-primary);
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.bundle-empty {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  padding: 0.6rem 0;
+}
+
+.bundle-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0.6rem 0;
+}
+
+.bundle-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background-color: #FFFFFF;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.6rem;
+}
+
+.bundle-line-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.bundle-line-name em {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 0.76rem;
+  color: var(--color-text-muted);
+  margin-left: 6px;
+}
+
+.bundle-qty-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bundle-qty-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-medium);
+  background-color: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.bundle-qty-num {
+  min-width: 20px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.bundle-sum-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.84rem;
+  margin-top: 0.5rem;
+}
+
+.bundle-save-live {
+  color: var(--color-primary);
+  font-weight: 700;
+}
+
+.bundle-save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -0.5rem 0 1rem;
+}
+
+.bundle-was {
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+  text-decoration: line-through;
+}
+
+.bundle-save-pill {
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  background-color: #C05621;
+  border-radius: var(--radius-full);
+  padding: 2px 9px;
+}
+
+.bundle-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+  margin: 0.5rem 0 0;
+}
+
+.variants-admin-line {
+  font-size: 0.78rem;
+  color: var(--color-text-main);
+  margin: 0 0 0.6rem;
+}
+
+/* Editor varian di modal menu */
+.variant-empty {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  padding: 0.4rem 0 0.6rem;
+}
+
+.variant-edit-row {
+  display: grid;
+  grid-template-columns: 1fr 140px auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 0.5rem;
 }
 
 /* Availability Toggle */
@@ -3765,6 +4331,19 @@ async function handleResetBranding() {
   gap: 8px;
   margin-top: 1rem;
   flex-wrap: wrap;
+}
+
+.wa-release-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.wa-release-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
 }
 
 /* Form batch */
@@ -5948,6 +6527,7 @@ async function handleResetBranding() {
     font-size: 0.8rem;
   }
 }
+
 
 /* --- SIKopi Tuku Visual Style Overrides for Admin --- */
 .admin-view, .admin-container {

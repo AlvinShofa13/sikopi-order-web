@@ -19,7 +19,7 @@ const customer = ref({
   specialRequest: ''
 })
 
-const { toastMessage, toastType, showToast } = createToast(3200)
+const { showToast } = createToast(3200)
 
 const isPreorder = computed(() => store.activeMode === 'preorder')
 const paymentMethod = ref(isPreorder.value ? 'transfer' : 'cash')
@@ -92,24 +92,35 @@ async function handleSubmitOrder() {
   }
 
   isSubmitting.value = true
+  try {
+    // Bukti transfer diunggah dulu (dikompresi di browser) lalu pesanan tercatat
+    // dengan URL buktinya — server adalah otoritas total & kode transaksi.
+    let proofUrl = null
+    if (needsProof.value) {
+      proofUploading.value = true
+      proofUrl = await store.uploadPaymentProof(proofFile.value)
+      proofUploading.value = false
+    }
 
-  const payload = {
-    paymentMethod: paymentMethod.value,
-    proofFile: proofFile.value,
-    customerData: {
-      name: customer.value.name.trim(),
-      phone: customer.value.phone.trim()
-    },
-    specialRequest: customer.value.specialRequest?.trim() || ''
-  }
+    const orderNumber = await store.placeOrder(
+      {
+        name: customer.value.name.trim(),
+        phone: customer.value.phone.trim(),
+        specialRequest: customer.value.specialRequest?.trim() || ''
+      },
+      {
+        method: paymentMethod.value,
+        batchId: store.activeBatch?.id || null,
+        paymentProof: proofUrl
+      }
+    )
 
-  const result = await store.submitOrder(payload)
-  isSubmitting.value = false
-
-  if (result.ok) {
-    router.replace(`/konfirmasi/${result.orderId}`)
-  } else {
-    serverErrorMessage.value = result.error || 'Terjadi kesalahan saat memproses pesanan. Silakan coba lagi.'
+    removeProof()
+    router.push(`/konfirmasi/${orderNumber}`)
+  } catch (err) {
+    isSubmitting.value = false
+    proofUploading.value = false
+    serverErrorMessage.value = err.message || 'Terjadi kesalahan saat memproses pesanan. Silakan coba lagi.'
     showToast(serverErrorMessage.value, 'error')
   }
 }
@@ -312,11 +323,14 @@ async function handleSubmitOrder() {
             <div class="order-items-mini-list font-mono">
               <div 
                 v-for="item in store.cart" 
-                :key="item.id" 
+                :key="item.key || item.id" 
                 class="mini-item-row"
               >
-                <span class="mini-item-name">{{ item.quantity }}x {{ item.name }}</span>
-                <span class="mini-item-price">{{ formatRupiah(item.price * item.quantity) }}</span>
+                <span class="mini-item-name">
+                  {{ item.quantity }}x {{ item.name }}
+                  <span v-if="(item.variants || []).length" class="mini-item-variant">({{ (item.variants || []).join(', ') }})</span>
+                </span>
+                <span class="mini-item-price">{{ formatRupiah(store.lineTotal(item)) }}</span>
               </div>
             </div>
 
@@ -335,9 +349,9 @@ async function handleSubmitOrder() {
             <button 
               type="submit" 
               class="btn btn-primary btn-checkout-submit" 
-              :disabled="isSubmitting"
+              :disabled="isSubmitting || proofUploading"
             >
-              {{ isSubmitting ? 'MEMPROSES PESANAN...' : 'KIRIM PESANAN SEKARANG &rarr;' }}
+              {{ proofUploading ? 'MENGUNGGAH BUKTI...' : isSubmitting ? 'MEMPROSES PESANAN...' : 'KIRIM PESANAN SEKARANG &rarr;' }}
             </button>
           </div>
         </div>
@@ -721,6 +735,12 @@ async function handleSubmitOrder() {
   justify-content: space-between;
   font-size: 11px;
   color: var(--color-primary);
+}
+
+.mini-item-variant {
+  font-size: 10px;
+  color: var(--color-primary-2);
+  font-weight: 700;
 }
 
 .summary-total-line {

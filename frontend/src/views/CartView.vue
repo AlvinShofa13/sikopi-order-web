@@ -1,6 +1,8 @@
 <script setup>
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import { formatRupiah } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
@@ -17,6 +19,26 @@ function handleRemoveItem(id) {
 
 function handleUpdateNotes(id, event) {
   store.updateItemNotes(id, event.target.value)
+}
+
+// Cek status pesanan lama lewat kode transaksi (tanpa login).
+const lookupCode = ref('')
+const lookupError = ref('')
+const isLookingUp = ref(false)
+
+async function lookupOrder() {
+  const code = (lookupCode.value || '').trim().toUpperCase()
+  if (!code) return
+  isLookingUp.value = true
+  lookupError.value = ''
+  const res = await api.orders.getById(code)
+  isLookingUp.value = false
+  if (!res.ok) {
+    lookupError.value = res.error || 'Kode pesanan tidak ditemukan.'
+    return
+  }
+  store.handleIncomingOrder(res.data)
+  router.push(`/konfirmasi/${res.data.orderId}`)
 }
 
 function proceedToCheckout() {
@@ -76,13 +98,13 @@ function continueShopping() {
         <div class="cart-items-column">
           <div 
             v-for="item in store.cart" 
-            :key="item.id" 
+            :key="item.key || item.id" 
             class="cart-item-row"
           >
             <!-- Thumbnail square -->
             <div class="cart-item-thumb">
               <img 
-                :src="item.imageUrl || '/catalog-poster.svg'" 
+                :src="api.fileUrl(item.image)" 
                 :alt="item.name" 
                 class="thumb-img"
               />
@@ -92,11 +114,14 @@ function continueShopping() {
             <div class="cart-item-details">
               <div class="item-top-row">
                 <span class="item-title font-mono">{{ item.name }}</span>
-                <span class="item-subtotal font-mono">{{ formatRupiah(item.price * item.quantity) }}</span>
+                <span class="item-subtotal font-mono">{{ formatRupiah(store.lineTotal(item)) }}</span>
               </div>
               <div class="item-price-single font-mono">
-                {{ formatRupiah(item.price) }} / porsi
+                {{ formatRupiah(store.lineTotal(item) / item.quantity) }} / porsi
               </div>
+              <p v-if="(item.variants || []).length > 0" class="item-variants font-mono">
+                Varian: {{ (item.variants || []).join(', ') }}
+              </p>
 
               <!-- Notes Input (Handwritten placeholder) -->
               <div class="item-note-wrap">
@@ -105,7 +130,7 @@ function continueShopping() {
                   :value="item.notes || ''"
                   placeholder="Catatan khusus (misal: less ice, normal sugar)..." 
                   class="item-note-input"
-                  @change="handleUpdateNotes(item.id, $event)"
+                  @change="handleUpdateNotes(item.key || item.id, $event)"
                 />
               </div>
 
@@ -115,7 +140,7 @@ function continueShopping() {
                   <button 
                     type="button" 
                     class="step-btn" 
-                    @click="handleQuantityChange(item.id, -1)"
+                    @click="handleQuantityChange(item.key || item.id, -1)"
                   >
                     &minus;
                   </button>
@@ -123,7 +148,7 @@ function continueShopping() {
                   <button 
                     type="button" 
                     class="step-btn" 
-                    @click="handleQuantityChange(item.id, 1)"
+                    @click="handleQuantityChange(item.key || item.id, 1)"
                   >
                     +
                   </button>
@@ -159,14 +184,14 @@ function continueShopping() {
             </div>
             <div class="summary-line font-mono">
               <span>SUBTOTAL HIDANGAN</span>
-              <span>{{ formatRupiah(store.cartTotal) }}</span>
+              <span>{{ formatRupiah(store.grandTotal) }}</span>
             </div>
 
             <div class="divider-line"></div>
 
             <div class="summary-total-line font-mono">
               <span class="total-label">TOTAL AKHIR</span>
-              <span class="total-amount">{{ formatRupiah(store.cartTotal) }}</span>
+              <span class="total-amount">{{ formatRupiah(store.grandTotal) }}</span>
             </div>
 
             <div class="tag-free-tax font-mono">
@@ -182,6 +207,30 @@ function continueShopping() {
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Cek Status Pesanan: pelanggan yang sudah punya kode transaksi -->
+      <div class="lookup-card">
+        <div class="lookup-icon-wrap">
+          <AppIcon name="receipt" :size="28" />
+        </div>
+        <h3 class="lookup-title">Sudah Pernah Memesan?</h3>
+        <p class="lookup-subtitle">
+          Masukkan kode transaksi Anda (contoh: SK-2K9QW4Z7) untuk melihat status pesanan.
+        </p>
+        <div class="lookup-form">
+          <input
+            v-model="lookupCode"
+            type="text"
+            placeholder="Contoh: SK-2K9QW4Z7"
+            class="lookup-input font-mono"
+            @keyup.enter="lookupOrder"
+          />
+          <button type="button" class="btn-lookup" :disabled="isLookingUp" @click="lookupOrder">
+            {{ isLookingUp ? 'Mencari...' : 'Lihat Status' }}
+          </button>
+        </div>
+        <span v-if="lookupError" class="lookup-error">{{ lookupError }}</span>
       </div>
     </div>
   </div>
@@ -482,5 +531,91 @@ function continueShopping() {
   .cart-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Varian pada baris cart */
+.item-variants {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  font-weight: 700;
+  margin: 2px 0 0;
+}
+
+/* Cek status pesanan via kode transaksi */
+.lookup-card {
+  max-width: 480px;
+  margin: 3rem auto 0;
+  padding: 2.25rem 2rem;
+  background-color: var(--color-white);
+  border: 2px solid var(--color-primary);
+  text-align: center;
+}
+
+.lookup-icon-wrap {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-peach);
+  color: var(--color-primary);
+}
+
+.lookup-title {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  margin-bottom: 0.5rem;
+}
+
+.lookup-subtitle {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--color-primary-2);
+  margin-bottom: 1.5rem;
+}
+
+.lookup-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lookup-input {
+  flex: 1;
+  min-width: 0;
+  height: 46px;
+  padding: 0 14px;
+  border: 2px solid var(--color-primary);
+  background-color: var(--color-white);
+  outline: none;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.btn-lookup {
+  height: 46px;
+  padding: 0 20px;
+  border: none;
+  background-color: var(--color-primary);
+  color: #FFFFFF;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-lookup:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.lookup-error {
+  display: block;
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--color-status-danger);
+  font-weight: 700;
 }
 </style>

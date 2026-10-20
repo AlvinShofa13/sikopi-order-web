@@ -5,7 +5,6 @@ import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
 import { isOrderPaid, paymentLabel } from '@/utils/salesAnalytics'
 import { formatRupiah } from '@/utils/format'
-import { orderStatusText, openWhatsApp } from '@/utils/wa'
 
 const route = useRoute()
 const router = useRouter()
@@ -93,7 +92,8 @@ function triggerReadyAlert() {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6)
     osc.start()
     osc.stop(ctx.currentTime + 0.6)
-  } catch {}
+  } catch {
+    /* AudioContext mungkin tidak tersedia; abaikan */ }
 
   if ('vibrate' in navigator) {
     navigator.vibrate([200, 100, 200, 100, 400])
@@ -106,10 +106,52 @@ watch(() => order.value?.orderStatus, (newVal, oldVal) => {
   }
 })
 
-onMounted(() => {
-  if (order.value?.orderStatus === 'Siap Diambil') {
-    triggerReadyAlert()
+// Polling status pesanan & pembayaran (listrik halaman reload pun tetap sinkron)
+let statusPollTimer = null
+
+async function refreshOrderStatus() {
+  if (!orderId.value) {
+    stopStatusPolling()
+    return
   }
+  const current = store.getOrderById(orderId.value)
+  const isPaid = isOrderPaid(current)
+  const isReadyOrDone = current?.orderStatus === 'Siap Diambil' || current?.orderStatus === 'Siap Disajikan' || current?.orderStatus === 'Selesai'
+
+  if (isPaid && isReadyOrDone) {
+    stopStatusPolling()
+    return
+  }
+
+  const res = await api.orders.getById(orderId.value)
+  if (res.ok && res.data) {
+    store.handleIncomingOrder(res.data)
+    if (isOrderPaid(res.data) && (res.data.orderStatus === 'Siap Diambil' || res.data.orderStatus === 'Siap Disajikan' || res.data.orderStatus === 'Selesai')) {
+      stopStatusPolling()
+    }
+  }
+}
+
+function stopStatusPolling() {
+  if (statusPollTimer) {
+    clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
+}
+
+onMounted(async () => {
+  if (!order.value) {
+    const res = await api.orders.getById(orderId.value)
+    if (res.ok && res.data) store.handleIncomingOrder(res.data)
+  }
+  const current = store.getOrderById(orderId.value)
+  if (!isOrderPaid(current) || (current?.orderStatus !== 'Siap Diambil' && current?.orderStatus !== 'Siap Disajikan' && current?.orderStatus !== 'Selesai')) {
+    statusPollTimer = setInterval(refreshOrderStatus, 3000)
+  }
+})
+
+onUnmounted(() => {
+  stopStatusPolling()
 })
 </script>
 
@@ -262,8 +304,8 @@ onMounted(() => {
               <!-- Item rows -->
               <div class="receipt-items-list font-mono">
                 <div 
-                  v-for="item in (order.items || [])" 
-                  :key="item.id" 
+                  v-for="(item, idx) in (order.items || [])" 
+                  :key="`${item.id || item.name}-${idx}`" 
                   class="receipt-item-row"
                 >
                   <div class="receipt-item-main">
