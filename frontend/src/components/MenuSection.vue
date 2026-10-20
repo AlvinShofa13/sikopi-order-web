@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
-import { formatRupiah } from '@/utils/format'
+import { formatRupiah, parseVariants, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
 
 const router = useRouter()
 const store = useOrderStore()
@@ -10,6 +10,9 @@ const store = useOrderStore()
 const searchQuery = ref('')
 const selectedCategory = ref('SEMUA')
 const selectedItemForCaption = ref(null)
+const activeItemForNote = ref(null)
+const itemNoteInput = ref('')
+const itemVariantsInput = ref([])
 
 const defaultCategories = ['SEMUA', 'KOPI', 'NON-KOPI', 'PASTRY']
 
@@ -48,18 +51,59 @@ const favoriteItems = computed(() => {
 })
 
 function getItemQty(id) {
-  const c = store.cart.find(i => i.id === id)
-  return c ? c.quantity : 0
+  return store.cart.filter((i) => i.id === id).reduce((s, i) => s + i.quantity, 0)
+}
+
+function bundleSaveInfo(item) {
+  return bundleSavings(item.bundle_items, store.menuItems, item.price)
+}
+
+function openNoteModal(item) {
+  if (item.is_available === false) return
+  activeItemForNote.value = item
+  itemNoteInput.value = ''
+  itemVariantsInput.value = []
+}
+
+function closeNoteModal() {
+  activeItemForNote.value = null
+  itemNoteInput.value = ''
+  itemVariantsInput.value = []
+}
+
+function toggleModalVariant(name) {
+  const idx = itemVariantsInput.value.indexOf(name)
+  if (idx === -1) itemVariantsInput.value.push(name)
+  else itemVariantsInput.value.splice(idx, 1)
+}
+
+function modalVariantExtra() {
+  if (!activeItemForNote.value) return 0
+  const byName = new Map(parseVariants(activeItemForNote.value.variants).map((v) => [v.name, v.price]))
+  return itemVariantsInput.value.reduce((s, n) => s + (byName.get(n) || 0), 0)
+}
+
+function confirmAddWithNote() {
+  if (!activeItemForNote.value || activeItemForNote.value.is_available === false) return
+  store.addToCart(activeItemForNote.value, itemNoteInput.value, itemVariantsInput.value)
+  selectedItemForCaption.value = activeItemForNote.value
+  closeNoteModal()
 }
 
 function handleAdd(item) {
   if (item.is_available === false) return
+  if (parseVariants(item.variants).length > 0) {
+    openNoteModal(item)
+    return
+  }
   store.addToCart(item)
   selectedItemForCaption.value = item
 }
 
 function handleRemove(item) {
-  store.removeFromCart(item.id)
+  // Hapus satu baris varian (atau baris pertama bila tanpa varian) — cukup per id.
+  const line = store.cart.find((i) => i.id === item.id)
+  if (line) store.removeFromCart(line.key || line.id)
 }
 
 function selectItem(item) {
@@ -294,11 +338,15 @@ function getItemType(item) {
                   <div class="item-header-row">
                     <span class="item-name font-mono" :class="{ 'strikethrough': item.is_available === false }">
                       {{ item.name }}
+                      <span v-if="item.is_bundle" class="bundle-tag">PAKET</span>
                     </span>
                   </div>
+                  <p v-if="item.is_bundle" class="item-bundle-contents">Isi: {{ bundleContentsLabel(item.bundle_items, store.menuItems) }}</p>
+                  <p v-if="parseVariants(item.variants).length > 0" class="item-variants-line">Varian: {{ variantsLabel(item.variants) }}</p>
                   <div class="item-dashed-line"></div>
                   <div class="item-footer-row">
                     <span class="item-price font-mono">{{ formatRupiah(item.price) }}</span>
+                    <span v-if="item.is_bundle && bundleSaveInfo(item).savings > 0" class="save-pill">Hemat {{ formatRupiah(bundleSaveInfo(item).savings) }}</span>
 
                     <!-- Stepper or Add button -->
                     <div class="stepper-action">
@@ -352,13 +400,54 @@ function getItemType(item) {
       </div>
     </section>
 
+    <!-- Modal pilih varian (menu bervarian) -->
+    <div v-if="activeItemForNote" class="variant-modal-backdrop" @click.self="closeNoteModal">
+      <div class="variant-modal-card">
+        <div class="variant-modal-header">
+          <h3 class="variant-modal-title">{{ activeItemForNote.name }}</h3>
+          <button type="button" class="variant-modal-close" @click="closeNoteModal">&times;</button>
+        </div>
+        <p class="variant-modal-price">{{ formatRupiah(activeItemForNote.price) }}</p>
+
+        <div v-if="parseVariants(activeItemForNote.variants).length > 0" class="variant-modal-group">
+          <label class="variant-modal-label">Varian (boleh pilih lebih dari satu)</label>
+          <div class="variant-pick-list">
+            <button
+              v-for="v in parseVariants(activeItemForNote.variants)"
+              :key="v.name"
+              type="button"
+              class="variant-chip"
+              :class="{ active: itemVariantsInput.includes(v.name) }"
+              @click="toggleModalVariant(v.name)"
+            >
+              <span class="variant-check">{{ itemVariantsInput.includes(v.name) ? '✓' : '' }}</span>
+              <span>{{ v.name }}</span>
+              <span class="variant-price">{{ v.price > 0 ? `+${formatRupiah(v.price)}` : 'Gratis' }}</span>
+            </button>
+          </div>
+          <p v-if="modalVariantExtra() > 0" class="variant-modal-hint">
+            Tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
+          </p>
+        </div>
+
+        <div class="variant-modal-group">
+          <label class="variant-modal-label" for="ms-note">Instruksi Khusus (Opsional)</label>
+          <textarea id="ms-note" v-model="itemNoteInput" rows="2" class="variant-modal-textarea" placeholder="Misal: less ice, normal sugar..."></textarea>
+        </div>
+
+        <button type="button" class="variant-modal-submit" @click="confirmAddWithNote">
+          TAMBAH KE PESANAN
+        </button>
+      </div>
+    </div>
+
     <!-- 3. Floating Cart Bar at bottom -->
     <div v-if="store.cartCount > 0" class="floating-cart-bar">
       <div class="cart-bar-inner">
         <div class="cart-bar-meta font-mono">
           <span class="cart-bar-qty">{{ store.cartCount }} PORSI</span>
           <span class="cart-bar-dot">&bull;</span>
-          <span class="cart-bar-total">{{ formatRupiah(store.cartTotal) }}</span>
+          <span class="cart-bar-total">{{ formatRupiah(store.grandTotal) }}</span>
         </div>
         <button 
           type="button" 
@@ -875,5 +964,173 @@ function getItemType(item) {
   .menu-items-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Bundle & varian pada kartu menu */
+.bundle-tag {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #FFFFFF;
+  background-color: var(--color-primary);
+  border-radius: 999px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.item-bundle-contents {
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--color-primary);
+  background-color: var(--color-primary-soft, #F0EAE1);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: 4px 0;
+}
+
+.item-variants-line {
+  font-size: 0.72rem;
+  color: var(--color-primary-2, #2C4A3E);
+  margin: 2px 0 6px;
+  opacity: 0.85;
+}
+
+.save-pill {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  background-color: #C05621;
+  border-radius: 999px;
+  padding: 2px 8px;
+  margin-left: 6px;
+}
+
+/* Modal pilih varian */
+.variant-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 1rem;
+}
+
+.variant-modal-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--color-white);
+  border: 2px solid var(--color-primary);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.variant-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.variant-modal-title {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.variant-modal-close {
+  border: none;
+  background: transparent;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-primary);
+}
+
+.variant-modal-price {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  margin: 0;
+}
+
+.variant-modal-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.variant-modal-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+}
+
+.variant-pick-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.variant-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1.5px solid var(--color-primary);
+  background: var(--color-white);
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--color-primary);
+}
+
+.variant-chip.active {
+  background-color: var(--color-peach);
+  font-weight: 700;
+}
+
+.variant-check {
+  width: 12px;
+  color: var(--color-primary);
+  font-weight: 800;
+}
+
+.variant-price {
+  font-size: 0.72rem;
+  opacity: 0.75;
+}
+
+.variant-modal-hint {
+  font-size: 0.75rem;
+  color: var(--color-primary-2, #2C4A3E);
+  margin: 0;
+}
+
+.variant-modal-textarea {
+  width: 100%;
+  border: 2px solid var(--color-primary);
+  padding: 8px 10px;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.variant-modal-submit {
+  background-color: var(--color-primary);
+  color: var(--color-cream);
+  border: 2px solid var(--color-primary);
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
 }
 </style>
