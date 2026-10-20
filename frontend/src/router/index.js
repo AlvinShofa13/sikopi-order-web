@@ -20,7 +20,7 @@ const router = createRouter({
     {
       path: '/menu',
       name: 'menu',
-      component: () => import('@/views/MenuView.vue')
+      component: () => import('@/views/HomeView.vue')
     },
     {
       path: '/pesanan',
