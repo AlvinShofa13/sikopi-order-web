@@ -73,6 +73,7 @@ class MenuItemUpdate(BaseModel):
 
 class MenuItemResponse(MenuItemBase):
     id: str
+    total_sold: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

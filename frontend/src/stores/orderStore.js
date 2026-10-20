@@ -110,7 +110,8 @@ export const useOrderStore = defineStore('order', () => {
         is_available: item.is_available !== false,
         is_bundle: item.is_bundle === true,
         bundle_items: typeof item.bundle_items === 'string' ? item.bundle_items : '',
-        variants: typeof item.variants === 'string' ? item.variants : ''
+        variants: typeof item.variants === 'string' ? item.variants : '',
+        total_sold: Number(item.total_sold) || 0
       }))
     }
   }
@@ -135,7 +136,8 @@ export const useOrderStore = defineStore('order', () => {
       is_available: newItemData.is_available !== false,
       is_bundle: newItemData.is_bundle === true,
       bundle_items: serializeBundleItems(newItemData.bundle_items),
-      variants: serializeVariants(newItemData.variants)
+      variants: serializeVariants(newItemData.variants),
+      total_sold: 0
     }
     menuItems.value.push(item)
     api.menu.create(item)

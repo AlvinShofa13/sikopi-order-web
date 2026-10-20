@@ -14,9 +14,12 @@ function handleMenuClick(event) {
   isMobileMenuOpen.value = false
   if (route.path === '/' || route.path === '/menu') {
     event.preventDefault()
-    const el = document.getElementById('katalog-section') || document.getElementById('menu-section') || document.getElementById('menu')
+    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 960
+    const el = isMobile
+      ? (document.getElementById('daftar-menu') || document.getElementById('search-box-wrap') || document.getElementById('katalog-section'))
+      : (document.getElementById('katalog-section') || document.getElementById('daftar-menu'))
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth' })
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   } else {
     router.push({ path: '/', hash: '#katalog-section' })

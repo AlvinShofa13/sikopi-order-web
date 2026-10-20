@@ -97,9 +97,12 @@ function handleHotspotClick(hotspot) {
       router.push('/konfirmasi/lacak')
     }
   } else if (hotspot.action.startsWith('#')) {
-    const el = document.querySelector(hotspot.action) || document.getElementById('katalog-section')
+    const isMobile = typeof window !== 'undefined' && window.innerWidth <= 960
+    const el = isMobile
+      ? (document.getElementById('daftar-menu') || document.getElementById('search-box-wrap') || document.querySelector(hotspot.action))
+      : (document.querySelector(hotspot.action) || document.getElementById('daftar-menu'))
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth' })
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }
 }

@@ -24,9 +24,13 @@ function formatDateTime(iso) {
 }
 
 function scrollToCatalog() {
-  const el = document.getElementById('katalog-section') || document.getElementById('menu-section') || document.getElementById('menu')
+  const isMobile = typeof window !== 'undefined' && window.innerWidth <= 960
+  // Prioritaskan daftar menu / area pencarian (melewati menu favorit)
+  const el = isMobile
+    ? (document.getElementById('daftar-menu') || document.getElementById('search-box-wrap') || document.getElementById('katalog-section'))
+    : (document.getElementById('katalog-section') || document.getElementById('daftar-menu'))
   if (el) {
-    el.scrollIntoView({ behavior: 'smooth' })
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 }
 </script>

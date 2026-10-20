@@ -1,7 +1,8 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
 import { formatRupiah, parseVariants, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
 
 const router = useRouter()
@@ -46,8 +47,73 @@ const filteredMenuItems = computed(() => {
   })
 })
 
+// Menu favorit diurutkan otomatis dari yang paling banyak dibeli (terlaris)
 const favoriteItems = computed(() => {
-  return store.menuItems.slice(0, 6)
+  if (!store.menuItems || store.menuItems.length === 0) return []
+  return [...store.menuItems]
+    .sort((a, b) => {
+      const soldDiff = (Number(b.total_sold) || 0) - (Number(a.total_sold) || 0)
+      if (soldDiff !== 0) return soldDiff
+      return (a.name || '').localeCompare(b.name || '')
+    })
+    .slice(0, 10)
+})
+
+// Carousel otomatis untuk poster kiri "MENU KAMI"
+const carouselIndex = ref(0)
+let carouselTimer = null
+
+const carouselItems = computed(() => {
+  const list = filteredMenuItems.value.length > 0 ? filteredMenuItems.value : store.menuItems
+  return list
+})
+
+const activeCarouselItem = computed(() => {
+  if (carouselItems.value.length === 0) return null
+  const idx = ((carouselIndex.value % carouselItems.value.length) + carouselItems.value.length) % carouselItems.value.length
+  return carouselItems.value[idx]
+})
+
+function nextCarouselSlide() {
+  if (carouselItems.value.length <= 1) return
+  carouselIndex.value = (carouselIndex.value + 1) % carouselItems.value.length
+}
+
+function prevCarouselSlide() {
+  if (carouselItems.value.length <= 1) return
+  carouselIndex.value = (carouselIndex.value - 1 + carouselItems.value.length) % carouselItems.value.length
+}
+
+function setCarouselSlide(idx) {
+  carouselIndex.value = idx
+}
+
+function startCarouselAutoPlay() {
+  stopCarouselAutoPlay()
+  if (typeof window !== 'undefined') {
+    carouselTimer = setInterval(() => {
+      nextCarouselSlide()
+    }, 3500)
+  }
+}
+
+function stopCarouselAutoPlay() {
+  if (carouselTimer) {
+    clearInterval(carouselTimer)
+    carouselTimer = null
+  }
+}
+
+watch(selectedCategory, () => {
+  carouselIndex.value = 0
+})
+
+onMounted(() => {
+  startCarouselAutoPlay()
+})
+
+onUnmounted(() => {
+  stopCarouselAutoPlay()
 })
 
 function getItemQty(id) {
@@ -122,9 +188,9 @@ function getItemType(item) {
 </script>
 
 <template>
-  <div id="katalog-section" class="catalog-page-wrapper">
+  <div class="catalog-page-wrapper">
     <!-- 1. Horizontal Favorit Carousel ("Berawal dari warga") -->
-    <section v-if="favoriteItems.length > 0" class="favorit-section">
+    <section v-if="favoriteItems.length > 0" id="favorit-section" class="favorit-section">
       <div class="container favorit-container">
         <div class="favorit-header">
           <h2 class="heading-display favorit-title">MENU FAVORIT</h2>
@@ -138,65 +204,78 @@ function getItemType(item) {
             class="fav-card"
             @click="selectItem(fav)"
           >
-            <!-- White border cutout frame with distinct product illustration -->
+            <!-- White border cutout frame with image or distinct product illustration -->
             <div class="fav-img-box">
-              <!-- Cold Coffee / Es Kopi Susu -->
-              <svg v-if="getItemType(fav) === 'cold-coffee'" viewBox="0 0 100 100" class="fav-svg-art">
-                <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
-                <!-- Ice cup -->
-                <polygon points="30,22 70,22 64,82 36,82" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="2" />
-                <!-- Coffee layer -->
-                <polygon points="32,34 68,34 66,54 34,54" fill="#5C3B1E" />
-                <!-- Milk layer -->
-                <polygon points="34,54 66,54 64,80 36,80" fill="#E6D7C3" />
-                <!-- Straw -->
-                <line x1="45" y1="12" x2="52" y2="76" stroke="#D9886A" stroke-width="3" stroke-linecap="round" />
-                <!-- Ice cube -->
-                <rect x="42" y="38" width="14" height="12" fill="#FFFFFF" opacity="0.6" stroke="#2C4A3E" stroke-width="1" />
-              </svg>
+              <img 
+                v-if="fav.image" 
+                :src="api.fileUrl(fav.image)" 
+                :alt="fav.name" 
+                class="fav-real-img"
+                loading="lazy"
+              />
+              <template v-else>
+                <!-- Cold Coffee / Es Kopi Susu -->
+                <svg v-if="getItemType(fav) === 'cold-coffee'" viewBox="0 0 100 100" class="fav-svg-art">
+                  <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
+                  <!-- Ice cup -->
+                  <polygon points="30,22 70,22 64,82 36,82" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="2" />
+                  <!-- Coffee layer -->
+                  <polygon points="32,34 68,34 66,54 34,54" fill="#5C3B1E" />
+                  <!-- Milk layer -->
+                  <polygon points="34,54 66,54 64,80 36,80" fill="#E6D7C3" />
+                  <!-- Straw -->
+                  <line x1="45" y1="12" x2="52" y2="76" stroke="#D9886A" stroke-width="3" stroke-linecap="round" />
+                  <!-- Ice cube -->
+                  <rect x="42" y="38" width="14" height="12" fill="#FFFFFF" opacity="0.6" stroke="#2C4A3E" stroke-width="1" />
+                </svg>
 
-              <!-- Sandwich -->
-              <svg v-else-if="getItemType(fav) === 'sandwich'" viewBox="0 0 100 100" class="fav-svg-art">
-                <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
-                <!-- Bread triangle -->
-                <polygon points="18,72 82,72 50,24" fill="#D9A066" stroke="#FAF7F2" stroke-width="2" />
-                <!-- Lettuce -->
-                <path d="M22,66 Q35,60 48,64 Q62,60 76,66" stroke="#52B788" stroke-width="4" fill="none" stroke-linecap="round" />
-                <!-- Tomato & Egg -->
-                <rect x="30" y="52" width="22" height="6" fill="#E63946" />
-                <circle cx="62" cy="55" r="5" fill="#FFB703" />
-              </svg>
+                <!-- Sandwich -->
+                <svg v-else-if="getItemType(fav) === 'sandwich'" viewBox="0 0 100 100" class="fav-svg-art">
+                  <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
+                  <!-- Bread triangle -->
+                  <polygon points="18,72 82,72 50,24" fill="#D9A066" stroke="#FAF7F2" stroke-width="2" />
+                  <!-- Lettuce -->
+                  <path d="M22,66 Q35,60 48,64 Q62,60 76,66" stroke="#52B788" stroke-width="4" fill="none" stroke-linecap="round" />
+                  <!-- Tomato & Egg -->
+                  <rect x="30" y="52" width="22" height="6" fill="#E63946" />
+                  <circle cx="62" cy="55" r="5" fill="#FFB703" />
+                </svg>
 
-              <!-- Pastry / Brownies -->
-              <svg v-else-if="getItemType(fav) === 'pastry'" viewBox="0 0 100 100" class="fav-svg-art">
-                <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
-                <!-- Brownies square -->
-                <rect x="25" y="34" width="50" height="40" fill="#3D2314" stroke="#FAF7F2" stroke-width="2" />
-                <!-- Chocolate drizzle -->
-                <path d="M28,42 Q40,36 50,42 Q62,38 72,44" stroke="#D9886A" stroke-width="3" fill="none" stroke-linecap="round" />
-                <!-- Skewer / Stick -->
-                <line x1="50" y1="74" x2="50" y2="92" stroke="#C89666" stroke-width="3" stroke-linecap="round" />
-              </svg>
+                <!-- Pastry / Brownies -->
+                <svg v-else-if="getItemType(fav) === 'pastry'" viewBox="0 0 100 100" class="fav-svg-art">
+                  <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
+                  <!-- Brownies square -->
+                  <rect x="25" y="34" width="50" height="40" fill="#3D2314" stroke="#FAF7F2" stroke-width="2" />
+                  <!-- Chocolate drizzle -->
+                  <path d="M28,42 Q40,36 50,42 Q62,38 72,44" stroke="#D9886A" stroke-width="3" fill="none" stroke-linecap="round" />
+                  <!-- Skewer / Stick -->
+                  <line x1="50" y1="74" x2="50" y2="92" stroke="#C89666" stroke-width="3" stroke-linecap="round" />
+                </svg>
 
-              <!-- Hot Coffee Default -->
-              <svg v-else viewBox="0 0 100 100" class="fav-svg-art">
-                <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
-                <!-- Cup -->
-                <path d="M24,38 L76,38 L68,78 L32,78 Z" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="2" />
-                <ellipse cx="50" cy="38" rx="26" ry="7" fill="#4A2810" stroke="#FAF7F2" stroke-width="1.5" />
-                <!-- Handle -->
-                <path d="M72,44 Q86,44 86,56 Q86,68 68,68" fill="none" stroke="#FAF7F2" stroke-width="3" />
-                <!-- Steam -->
-                <path d="M44,28 Q40,20 44,14" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-linecap="round" opacity="0.8" />
-                <path d="M56,26 Q60,18 56,12" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-linecap="round" opacity="0.8" />
-              </svg>
+                <!-- Hot Coffee Default -->
+                <svg v-else viewBox="0 0 100 100" class="fav-svg-art">
+                  <rect x="0" y="0" width="100" height="100" fill="#2C4A3E" />
+                  <!-- Cup -->
+                  <path d="M24,38 L76,38 L68,78 L32,78 Z" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="2" />
+                  <ellipse cx="50" cy="38" rx="26" ry="7" fill="#4A2810" stroke="#FAF7F2" stroke-width="1.5" />
+                  <!-- Handle -->
+                  <path d="M72,44 Q86,44 86,56 Q86,68 68,68" fill="none" stroke="#FAF7F2" stroke-width="3" />
+                  <!-- Steam -->
+                  <path d="M44,28 Q40,20 44,14" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+                  <path d="M56,26 Q60,18 56,12" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+                </svg>
+              </template>
 
               <span class="fav-badge name-tag-peach font-mono">FAVORIT</span>
+              <span v-if="fav.total_sold > 0" class="fav-sold-badge font-mono">{{ fav.total_sold }} TERJUAL</span>
             </div>
 
             <!-- Card Bottom Info -->
             <div class="fav-info">
-              <h4 class="fav-name font-mono">{{ fav.name }}</h4>
+              <h4 class="fav-name font-mono" :title="fav.name">
+                {{ fav.name }}
+                <span v-if="fav.is_bundle" class="bundle-tag">PAKET</span>
+              </h4>
               <div class="fav-bottom-row">
                 <span class="fav-price font-mono">{{ formatRupiah(fav.price) }}</span>
                 <button 
@@ -204,6 +283,7 @@ function getItemType(item) {
                   class="fav-add-btn" 
                   :disabled="fav.is_available === false"
                   @click.stop="handleAdd(fav)"
+                  title="Tambah ke Pesanan"
                 >
                   +
                 </button>
@@ -215,39 +295,135 @@ function getItemType(item) {
     </section>
 
     <!-- 2. MAIN 50/50 SPLIT CATALOG -->
-    <section class="split-catalog-section">
-      <!-- Left 50%: Rich Artisan Poster with "MENU KAMI" -->
-      <div class="catalog-left-sticky">
+    <section id="katalog-section" class="split-catalog-section">
+      <!-- Left 50%: Rich Artisan Poster with "MENU KAMI" + Carousel -->
+      <div 
+        class="catalog-left-sticky"
+        @mouseenter="stopCarouselAutoPlay"
+        @mouseleave="startCarouselAutoPlay"
+      >
         <div class="poster-inner">
           <div class="poster-badge-top">
             <span class="category-pill-tag font-mono">KATEGORI: {{ selectedCategory }}</span>
+            <span v-if="carouselItems.length > 1" class="carousel-counter-tag font-mono">
+              {{ (carouselIndex % carouselItems.length) + 1 }} / {{ carouselItems.length }}
+            </span>
           </div>
 
           <h1 class="heading-display catalog-display-title">MENU KAMI</h1>
 
-          <!-- Central Artisan Coffee Illustration -->
-          <div class="poster-illustration-box">
-            <svg viewBox="0 0 300 360" class="poster-art-svg">
-              <!-- Frame border -->
-              <rect x="10" y="10" width="280" height="340" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-dasharray="8,6" opacity="0.4" />
-              
-              <!-- Giant Coffee Cup Artwork -->
-              <g transform="translate(60, 90)">
-                <ellipse cx="90" cy="50" rx="80" ry="22" fill="#FAF7F2" opacity="0.12" />
-                <path d="M15,50 Q20,180 90,180 Q160,180 165,50 Z" fill="#F0EAE1" stroke="#FAF7F2" stroke-width="3" />
-                <ellipse cx="90" cy="50" rx="72" ry="18" fill="#4A2E1B" stroke="#FAF7F2" stroke-width="2.5" />
-                <ellipse cx="90" cy="50" rx="50" ry="10" fill="#D9886A" opacity="0.8" />
-                <!-- Handle -->
-                <path d="M160,65 C200,65 200,145 155,145" fill="none" stroke="#FAF7F2" stroke-width="5" stroke-linecap="round" />
-                <!-- Steam -->
-                <path d="M75,25 Q65,-2 75,-25" fill="none" stroke="#FAF7F2" stroke-width="2.5" stroke-linecap="round" opacity="0.85" />
-                <path d="M100,20 Q112,-8 100,-30" fill="none" stroke="#FAF7F2" stroke-width="2.5" stroke-linecap="round" opacity="0.85" />
-              </g>
+          <!-- Auto-rotating Menu Showcase Carousel in Original Compact Frame -->
+          <div class="poster-carousel-container">
+            <div 
+              v-if="activeCarouselItem" 
+              class="poster-frame-box" 
+              @click="selectItem(activeCarouselItem)"
+            >
+              <!-- Frame Image / Art Area -->
+              <div class="frame-art-area">
+                <img 
+                  v-if="activeCarouselItem.image" 
+                  :src="api.fileUrl(activeCarouselItem.image)" 
+                  :alt="activeCarouselItem.name" 
+                  class="frame-real-img"
+                />
+                <template v-else>
+                  <!-- Cold coffee -->
+                  <svg v-if="getItemType(activeCarouselItem) === 'cold-coffee'" viewBox="0 0 100 100" class="frame-art-svg">
+                    <polygon points="30,22 70,22 64,82 36,82" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="2" />
+                    <polygon points="32,34 68,34 66,54 34,54" fill="#5C3B1E" />
+                    <polygon points="34,54 66,54 64,80 36,80" fill="#E6D7C3" />
+                    <line x1="45" y1="12" x2="52" y2="76" stroke="#D9886A" stroke-width="3" stroke-linecap="round" />
+                    <rect x="42" y="38" width="14" height="12" fill="#FFFFFF" opacity="0.6" stroke="#2C4A3E" stroke-width="1" />
+                  </svg>
+                  <!-- Sandwich -->
+                  <svg v-else-if="getItemType(activeCarouselItem) === 'sandwich'" viewBox="0 0 100 100" class="frame-art-svg">
+                    <polygon points="18,72 82,72 50,24" fill="#D9A066" stroke="#FAF7F2" stroke-width="2" />
+                    <path d="M22,66 Q35,60 48,64 Q62,60 76,66" stroke="#52B788" stroke-width="4" fill="none" stroke-linecap="round" />
+                    <rect x="30" y="52" width="22" height="6" fill="#E63946" />
+                    <circle cx="62" cy="55" r="5" fill="#FFB703" />
+                  </svg>
+                  <!-- Pastry -->
+                  <svg v-else-if="getItemType(activeCarouselItem) === 'pastry'" viewBox="0 0 100 100" class="frame-art-svg">
+                    <rect x="25" y="34" width="50" height="40" fill="#3D2314" stroke="#FAF7F2" stroke-width="2" />
+                    <path d="M28,42 Q40,36 50,42 Q62,38 72,44" stroke="#D9886A" stroke-width="3" fill="none" stroke-linecap="round" />
+                    <line x1="50" y1="74" x2="50" y2="92" stroke="#C89666" stroke-width="3" stroke-linecap="round" />
+                  </svg>
+                  <!-- Hot Coffee Default -->
+                  <svg v-else viewBox="0 0 100 100" class="frame-art-svg">
+                    <path d="M24,38 L76,38 L68,78 L32,78 Z" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="2" />
+                    <ellipse cx="50" cy="38" rx="26" ry="7" fill="#4A2810" stroke="#FAF7F2" stroke-width="1.5" />
+                    <path d="M72,44 Q86,44 86,56 Q86,68 68,68" fill="none" stroke="#FAF7F2" stroke-width="3" />
+                    <path d="M44,28 Q40,20 44,14" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+                    <path d="M56,26 Q60,18 56,12" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-linecap="round" opacity="0.8" />
+                  </svg>
+                </template>
 
-              <!-- Bottom Tag -->
-              <rect x="30" y="295" width="240" height="36" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="2" />
-              <text x="150" y="318" fill="#2C4A3E" font-family="'Permanent Marker', cursive" font-size="14" text-anchor="middle">BIJI KOPI PILIHAN</text>
-            </svg>
+                <span v-if="activeCarouselItem.is_bundle" class="frame-bundle-badge font-mono">PAKET</span>
+                <span v-if="activeCarouselItem.is_available === false" class="frame-habis-badge font-mono">HABIS</span>
+              </div>
+
+              <!-- Bottom Tag Box (like original BIJI KOPI PILIHAN tag) -->
+              <div class="poster-tag-box">
+                <span class="poster-tag-text font-mono" :title="activeCarouselItem.name">
+                  {{ activeCarouselItem.name }}
+                </span>
+                <span class="poster-tag-price font-mono">
+                  {{ formatRupiah(activeCarouselItem.price) }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Fallback if menu is empty -->
+            <div v-else class="poster-illustration-box">
+              <svg viewBox="0 0 300 360" class="poster-art-svg">
+                <rect x="10" y="10" width="280" height="340" fill="none" stroke="#FAF7F2" stroke-width="2" stroke-dasharray="8,6" opacity="0.4" />
+                <g transform="translate(60, 90)">
+                  <ellipse cx="90" cy="50" rx="80" ry="22" fill="#FAF7F2" opacity="0.12" />
+                  <path d="M15,50 Q20,180 90,180 Q160,180 165,50 Z" fill="#F0EAE1" stroke="#FAF7F2" stroke-width="3" />
+                  <ellipse cx="90" cy="50" rx="72" ry="18" fill="#4A2E1B" stroke="#FAF7F2" stroke-width="2.5" />
+                  <ellipse cx="90" cy="50" rx="50" ry="10" fill="#D9886A" opacity="0.8" />
+                  <path d="M160,65 C200,65 200,145 155,145" fill="none" stroke="#FAF7F2" stroke-width="5" stroke-linecap="round" />
+                  <path d="M75,25 Q65,-2 75,-25" fill="none" stroke="#FAF7F2" stroke-width="2.5" stroke-linecap="round" opacity="0.85" />
+                  <path d="M100,20 Q112,-8 100,-30" fill="none" stroke="#FAF7F2" stroke-width="2.5" stroke-linecap="round" opacity="0.85" />
+                </g>
+                <rect x="30" y="295" width="240" height="36" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="2" />
+                <text x="150" y="318" fill="#2C4A3E" font-family="'Permanent Marker', cursive" font-size="14" text-anchor="middle">BIJI KOPI PILIHAN</text>
+              </svg>
+            </div>
+
+            <!-- Compact Carousel Controls -->
+            <div v-if="carouselItems.length > 1" class="carousel-mini-controls">
+              <button 
+                type="button" 
+                class="carousel-mini-btn" 
+                aria-label="Menu Sebelumnya"
+                title="Sebelumnya"
+                @click.stop="prevCarouselSlide"
+              >
+                &lsaquo;
+              </button>
+              <div class="carousel-dots-wrap">
+                <button 
+                  v-for="(cItem, idx) in carouselItems" 
+                  :key="'dot-' + cItem.id"
+                  type="button"
+                  class="carousel-dot"
+                  :class="{ active: (carouselIndex % carouselItems.length) === idx }"
+                  :aria-label="cItem.name"
+                  @click.stop="setCarouselSlide(idx)"
+                />
+              </div>
+              <button 
+                type="button" 
+                class="carousel-mini-btn" 
+                aria-label="Menu Selanjutnya"
+                title="Selanjutnya"
+                @click.stop="nextCarouselSlide"
+              >
+                &rsaquo;
+              </button>
+            </div>
           </div>
 
           <div class="poster-footer-notes font-mono">
@@ -258,10 +434,10 @@ function getItemType(item) {
       </div>
 
       <!-- Right 50%: Solid Sand Panel with Search, Segmented Tabs & 2-Col List -->
-      <div class="catalog-right-panel">
+      <div id="daftar-menu" class="catalog-right-panel">
         <div class="panel-inner">
           <!-- Outlined Search Box -->
-          <div class="search-box-wrap">
+          <div id="search-box-wrap" class="search-box-wrap">
             <input 
               v-model="searchQuery" 
               type="text" 
@@ -300,33 +476,42 @@ function getItemType(item) {
                 :class="{ 'is-unavailable': item.is_available === false }"
                 @click="selectItem(item)"
               >
-                <!-- Thumbnail square with category-specific icon -->
+                <!-- Thumbnail square with real image or category-specific icon -->
                 <div class="item-thumb-box">
-                  <!-- Cold coffee -->
-                  <svg v-if="getItemType(item) === 'cold-coffee'" viewBox="0 0 60 60" class="item-mini-svg">
-                    <rect width="60" height="60" fill="#2C4A3E" />
-                    <polygon points="18,12 42,12 38,48 22,48" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="1.5" />
-                    <rect x="20" y="20" width="20" height="12" fill="#5C3B1E" />
-                    <rect x="22" y="32" width="16" height="15" fill="#E6D7C3" />
-                  </svg>
-                  <!-- Sandwich -->
-                  <svg v-else-if="getItemType(item) === 'sandwich'" viewBox="0 0 60 60" class="item-mini-svg">
-                    <rect width="60" height="60" fill="#2C4A3E" />
-                    <polygon points="12,42 48,42 30,16" fill="#D9A066" stroke="#FAF7F2" stroke-width="1.5" />
-                    <line x1="14" y1="38" x2="46" y2="38" stroke="#52B788" stroke-width="2.5" />
-                  </svg>
-                  <!-- Pastry -->
-                  <svg v-else-if="getItemType(item) === 'pastry'" viewBox="0 0 60 60" class="item-mini-svg">
-                    <rect width="60" height="60" fill="#2C4A3E" />
-                    <rect x="15" y="20" width="30" height="24" fill="#3D2314" stroke="#FAF7F2" stroke-width="1.5" />
-                    <line x1="30" y1="44" x2="30" y2="54" stroke="#C89666" stroke-width="2" />
-                  </svg>
-                  <!-- Hot Coffee Default -->
-                  <svg v-else viewBox="0 0 60 60" class="item-mini-svg">
-                    <rect width="60" height="60" fill="#2C4A3E" />
-                    <path d="M15,22 L45,22 L40,46 L20,46 Z" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="1.5" />
-                    <path d="M42,26 Q50,26 50,34 Q50,42 40,42" fill="none" stroke="#FAF7F2" stroke-width="2" />
-                  </svg>
+                  <img 
+                    v-if="item.image" 
+                    :src="api.fileUrl(item.image)" 
+                    :alt="item.name" 
+                    class="item-mini-img"
+                    loading="lazy"
+                  />
+                  <template v-else>
+                    <!-- Cold coffee -->
+                    <svg v-if="getItemType(item) === 'cold-coffee'" viewBox="0 0 60 60" class="item-mini-svg">
+                      <rect width="60" height="60" fill="#2C4A3E" />
+                      <polygon points="18,12 42,12 38,48 22,48" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="1.5" />
+                      <rect x="20" y="20" width="20" height="12" fill="#5C3B1E" />
+                      <rect x="22" y="32" width="16" height="15" fill="#E6D7C3" />
+                    </svg>
+                    <!-- Sandwich -->
+                    <svg v-else-if="getItemType(item) === 'sandwich'" viewBox="0 0 60 60" class="item-mini-svg">
+                      <rect width="60" height="60" fill="#2C4A3E" />
+                      <polygon points="12,42 48,42 30,16" fill="#D9A066" stroke="#FAF7F2" stroke-width="1.5" />
+                      <line x1="14" y1="38" x2="46" y2="38" stroke="#52B788" stroke-width="2.5" />
+                    </svg>
+                    <!-- Pastry -->
+                    <svg v-else-if="getItemType(item) === 'pastry'" viewBox="0 0 60 60" class="item-mini-svg">
+                      <rect width="60" height="60" fill="#2C4A3E" />
+                      <rect x="15" y="20" width="30" height="24" fill="#3D2314" stroke="#FAF7F2" stroke-width="1.5" />
+                      <line x1="30" y1="44" x2="30" y2="54" stroke="#C89666" stroke-width="2" />
+                    </svg>
+                    <!-- Hot Coffee Default -->
+                    <svg v-else viewBox="0 0 60 60" class="item-mini-svg">
+                      <rect width="60" height="60" fill="#2C4A3E" />
+                      <path d="M15,22 L45,22 L40,46 L20,46 Z" fill="#FAF7F2" stroke="#FAF7F2" stroke-width="1.5" />
+                      <path d="M42,26 Q50,26 50,34 Q50,42 40,42" fill="none" stroke="#FAF7F2" stroke-width="2" />
+                    </svg>
+                  </template>
 
                   <span v-if="item.is_available === false" class="badge-habis font-mono">
                     HABIS
@@ -501,24 +686,44 @@ function getItemType(item) {
 
 .favorit-carousel {
   display: flex;
-  gap: 1.5rem;
+  gap: 1.25rem;
   overflow-x: auto;
-  padding-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  scroll-snap-type: x mandatory;
   scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) #F5E3D8;
+}
+
+.favorit-carousel::-webkit-scrollbar {
+  height: 6px;
+}
+
+.favorit-carousel::-webkit-scrollbar-track {
+  background: #F5E3D8;
+  border-radius: 4px;
+}
+
+.favorit-carousel::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: 4px;
 }
 
 .fav-card {
-  flex: 0 0 240px;
+  flex: 1 0 240px;
+  max-width: 380px;
+  min-width: 220px;
   background-color: var(--color-white);
   border: 2px solid var(--color-primary);
   display: flex;
   flex-direction: column;
   cursor: pointer;
-  transition: transform 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  scroll-snap-align: start;
 }
 
 .fav-card:hover {
   transform: translateY(-3px);
+  box-shadow: 0 4px 12px rgba(44, 74, 62, 0.12);
 }
 
 .fav-img-box {
@@ -528,6 +733,18 @@ function getItemType(item) {
   background-color: var(--color-primary);
   border-bottom: 2px solid var(--color-primary);
   overflow: hidden;
+}
+
+.fav-real-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s ease;
+}
+
+.fav-card:hover .fav-real-img {
+  transform: scale(1.05);
 }
 
 .fav-svg-art {
@@ -545,21 +762,39 @@ function getItemType(item) {
   border: 1.5px solid var(--color-primary);
 }
 
+.fav-sold-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  background-color: rgba(44, 74, 62, 0.9);
+  color: #FAF7F2;
+  border: 1px solid #FAF7F2;
+}
+
 .fav-info {
   padding: 1rem;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  flex: 1;
+  justify-content: space-between;
 }
 
 .fav-name {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
   text-transform: uppercase;
   color: var(--color-primary);
-  white-space: nowrap;
+  line-height: 1.35;
+  min-height: 2.7em;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .fav-bottom-row {
@@ -599,6 +834,7 @@ function getItemType(item) {
   grid-template-columns: 1fr 1.15fr;
   min-height: 85vh;
   border-bottom: 2px solid var(--color-primary);
+  scroll-margin-top: 54px;
 }
 
 /* Left Sticky Side */
@@ -623,6 +859,9 @@ function getItemType(item) {
 
 .poster-badge-top {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .category-pill-tag {
@@ -633,6 +872,17 @@ function getItemType(item) {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
+}
+
+.carousel-counter-tag {
+  background-color: rgba(250, 247, 242, 0.15);
+  color: var(--color-cream);
+  border: 1.5px solid var(--color-cream);
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-left: auto;
 }
 
 .catalog-display-title {
@@ -656,6 +906,174 @@ function getItemType(item) {
   max-width: 320px;
 }
 
+/* Compact Poster Carousel (Exact Original Size & Frame Aesthetic) */
+.poster-carousel-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  max-height: 380px;
+  margin: 0.5rem 0;
+}
+
+.poster-frame-box {
+  width: 250px;
+  height: 310px;
+  border: 2px dashed rgba(250, 247, 242, 0.45);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 14px 14px;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease;
+  position: relative;
+  background-color: transparent;
+}
+
+.poster-frame-box:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-peach);
+}
+
+.frame-art-area {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  padding: 6px 0;
+}
+
+.frame-real-img {
+  width: 100%;
+  height: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: 4px;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+}
+
+.frame-art-svg {
+  width: 125px;
+  height: 125px;
+  display: block;
+}
+
+.frame-bundle-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background-color: var(--color-peach);
+  color: var(--color-primary);
+  font-size: 8px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border: 1px solid var(--color-primary);
+}
+
+.frame-habis-badge {
+  position: absolute;
+  inset: 0;
+  background: rgba(217, 48, 37, 0.88);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 1.5px;
+}
+
+.poster-tag-box {
+  width: 100%;
+  background-color: #FAF7F2;
+  border: 2px solid var(--color-primary);
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.poster-tag-text {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  text-align: center;
+}
+
+.poster-tag-price {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-peach);
+}
+
+.carousel-mini-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.carousel-mini-btn {
+  width: 22px;
+  height: 22px;
+  background-color: rgba(250, 247, 242, 0.12);
+  color: var(--color-cream);
+  border: 1px solid rgba(250, 247, 242, 0.35);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
+}
+
+.carousel-mini-btn:hover {
+  background-color: var(--color-peach);
+  color: var(--color-primary);
+  border-color: var(--color-peach);
+}
+
+.carousel-dots-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  overflow-x: auto;
+  padding: 2px;
+}
+
+.carousel-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: rgba(250, 247, 242, 0.35);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.carousel-dot.active {
+  background-color: var(--color-peach);
+  width: 14px;
+  border-radius: 3px;
+}
+
 .poster-footer-notes {
   display: flex;
   flex-direction: column;
@@ -671,17 +1089,23 @@ function getItemType(item) {
   background-color: var(--color-sand);
   display: flex;
   flex-direction: column;
+  height: calc(100vh - 54px);
+  max-height: calc(100vh - 54px);
+  position: sticky;
+  top: 54px;
+  scroll-margin-top: 54px;
 }
 
 .panel-inner {
-  padding: 2rem 2.5rem;
+  padding: 1.75rem 2.25rem;
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow: hidden;
 }
 
 .search-box-wrap {
-  margin-bottom: 1.25rem;
+  margin-bottom: 1rem;
 }
 
 .tuku-search-input {
@@ -697,19 +1121,45 @@ function getItemType(item) {
 }
 
 .categories-tab-bar {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 
 /* Internal Scroll Area for 2-column menu */
 .menu-items-scroll-area {
-  flex: 1;
-  max-height: 60vh;
-  min-height: 360px;
+  flex: 1 1 auto;
+  min-height: 200px;
   overflow-y: auto;
   padding-right: 8px;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) #E8DFC8;
+}
+
+.menu-items-scroll-area::-webkit-scrollbar {
+  width: 6px;
+}
+
+.menu-items-scroll-area::-webkit-scrollbar-track {
+  background: #E8DFC8;
+  border-radius: 4px;
+}
+
+.menu-items-scroll-area::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: 4px;
+}
+
+.menu-items-scroll-area::-webkit-scrollbar-thumb:hover {
+  background: var(--color-peach);
+}
+
+.item-mini-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .menu-items-grid {
@@ -954,15 +1404,39 @@ function getItemType(item) {
   .catalog-left-sticky {
     position: relative;
     top: 0;
-    height: 38vh;
+    height: auto;
+    min-height: 480px;
     border-right: none;
     border-bottom: 2px solid var(--color-primary);
   }
+  .catalog-right-panel {
+    position: relative;
+    top: 0;
+    height: auto;
+    max-height: none;
+  }
   .panel-inner {
     padding: 1.5rem 1rem;
+    height: auto;
+    overflow: visible;
+  }
+  .menu-items-scroll-area {
+    max-height: 60vh;
   }
   .menu-items-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .favorit-carousel {
+    gap: 1rem;
+  }
+  .fav-card {
+    flex: 0 0 78vw;
+    max-width: 300px;
+    min-width: 200px;
+    scroll-snap-align: center;
   }
 }
 

@@ -3,10 +3,11 @@ import os
 import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from auth_dep import require_admin
 from database import get_db
-from models import MenuItem
+from models import MenuItem, OrderItem
 from routers.uploads import MAX_MENU_BYTES, MENU_DIR, save_image
 from schemas import MenuItemCreate, MenuItemUpdate, MenuItemResponse
 
@@ -81,16 +82,33 @@ def _normalize_variants(variants) -> str | None:
 
 @router.get("", response_model=List[MenuItemResponse])
 def get_all_menu(db: Session = Depends(get_db)):
-    """Retrieve all menu items."""
-    return db.query(MenuItem).order_by(MenuItem.created_at.asc()).all()
+    """Retrieve all menu items with aggregated total_sold count."""
+    sales_data = (
+        db.query(OrderItem.menu_item_id, func.coalesce(func.sum(OrderItem.quantity), 0))
+        .filter(OrderItem.menu_item_id.isnot(None))
+        .group_by(OrderItem.menu_item_id)
+        .all()
+    )
+    sales_map = {item_id: int(qty) for item_id, qty in sales_data if item_id}
+
+    items = db.query(MenuItem).order_by(MenuItem.created_at.asc()).all()
+    for item in items:
+        setattr(item, "total_sold", sales_map.get(item.id, 0))
+    return items
 
 
 @router.get("/{menu_id}", response_model=MenuItemResponse)
 def get_menu_by_id(menu_id: str, db: Session = Depends(get_db)):
-    """Retrieve single menu item by ID."""
+    """Retrieve single menu item by ID with total_sold count."""
     item = db.query(MenuItem).filter(MenuItem.id == menu_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Menu tidak ditemukan.")
+    sold = (
+        db.query(func.coalesce(func.sum(OrderItem.quantity), 0))
+        .filter(OrderItem.menu_item_id == menu_id)
+        .scalar()
+    )
+    setattr(item, "total_sold", int(sold or 0))
     return item
 
 
