@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { formatRupiah, createToast } from '@/utils/format'
 import { generateQrisDataUrl } from '@/utils/qris'
-import { isValidWaPhone } from '@/utils/wa'
+import { isValidWaPhone, normalizeWaPhone } from '@/utils/wa'
 
 const router = useRouter()
 const store = useOrderStore()
@@ -53,7 +53,7 @@ function validateForm() {
     e.name = 'Nama pemesan wajib diisi agar kasir mudah mengenali pesanan Anda.'
   }
   if (!isValidWaPhone(customer.value.phone)) {
-    e.phone = 'Nomor WhatsApp wajib diisi (minimal 7 digit angka, gunakan awalan 08 atau kode negara internasional).'
+    e.phone = 'Nomor WhatsApp wajib diisi (minimal 8 digit angka, bisa diawali 08, 8, atau kode negara seperti +62, +65).'
   }
   if (needsProof.value && !proofFile.value) {
     e.proof = 'Pesanan transfer wajib mengunggah bukti pembayaran.'
@@ -152,7 +152,7 @@ async function handleSubmitOrder() {
     const orderNumber = await store.placeOrder(
       {
         name: customer.value.name.trim(),
-        phone: customer.value.phone.trim(),
+        phone: normalizeWaPhone(customer.value.phone),
         specialRequest: customer.value.specialRequest?.trim() || ''
       },
       {
@@ -224,13 +224,13 @@ async function handleSubmitOrder() {
                 <input 
                   v-model="customer.phone" 
                   type="tel" 
-                  placeholder="Contoh: 081234567890"
+                  placeholder="Contoh: 0812-3456-7890, 812..., atau +62..."
                   class="tuku-input font-mono"
                   :class="{ 'has-error': errors.phone }"
                 />
                 <span v-if="errors.phone" class="field-error font-mono">{{ errors.phone }}</span>
                 <span class="input-hint font-mono">
-                  Nomor ini digunakan untuk mengirim struk &amp; notifikasi saat pesanan siap diambil.
+                  Bisa menggunakan 08..., 8..., atau kode negara internasional (+62, +65, dsb). Digunakan untuk struk &amp; kabar pesanan via WhatsApp.
                 </span>
               </div>
 

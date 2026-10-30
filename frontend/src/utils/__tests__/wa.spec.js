@@ -25,25 +25,32 @@ const order = {
 const flat = (s) => s.replace(/ /g, ' ')
 
 describe('wa.js — pembungkus pesan WhatsApp', () => {
-  it('normalisasi nomor Indonesia ke format wa.me', () => {
-    expect(normalizeWaPhone('0812-3456-7890')).toBe('81234567890')
-    expect(normalizeWaPhone('+62 812 3456 7890')).toBe('81234567890')
-    expect(normalizeWaPhone('6281234567890')).toBe('81234567890')
+  it('normalisasi nomor Indonesia dan internasional ke format wa.me', () => {
+    expect(normalizeWaPhone('0812-3456-7890')).toBe('6281234567890')
+    expect(normalizeWaPhone('812-3456-7890')).toBe('6281234567890')
+    expect(normalizeWaPhone('+62 812 3456 7890')).toBe('6281234567890')
+    expect(normalizeWaPhone('+62 0812 3456 7890')).toBe('6281234567890')
+    expect(normalizeWaPhone('6281234567890')).toBe('6281234567890')
+    expect(normalizeWaPhone('62081234567890')).toBe('6281234567890')
+    expect(normalizeWaPhone('+65 9123 4567')).toBe('6591234567')
+    expect(normalizeWaPhone('006591234567')).toBe('6591234567')
     expect(normalizeWaPhone('')).toBe('')
   })
 
   it('validasi panjang nomor WhatsApp', () => {
     expect(isValidWaPhone('0812-3456-7890')).toBe(true)
+    expect(isValidWaPhone('81234567890')).toBe(true)
+    expect(isValidWaPhone('+65 9123 4567')).toBe(true)
     expect(isValidWaPhone('0812')).toBe(false)
     expect(isValidWaPhone('abc')).toBe(false)
   })
 
   it('bentuk link wa.me dengan pesan ter-encode', () => {
     const url = waLink('0812-3456-7890', 'Halo & selamat datang')
-    expect(url.startsWith('https://wa.me/81234567890?text=')).toBe(true)
+    expect(url.startsWith('https://wa.me/6281234567890?text=')).toBe(true)
     expect(url).toContain(encodeURIComponent('Halo & selamat datang'))
     // Tanpa sisa karakter: link persis sama dengan yang diharapkan
-    expect(url).toBe(`https://wa.me/81234567890?text=${encodeURIComponent('Halo & selamat datang')}`)
+    expect(url).toBe(`https://wa.me/6281234567890?text=${encodeURIComponent('Halo & selamat datang')}`)
   })
 
   it('link kosong bila nomor tidak valid', () => {

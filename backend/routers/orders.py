@@ -69,25 +69,35 @@ def normalize_phone(raw: str | None) -> str:
     if not digits:
         return ""
 
-    # Jika diawali tanda '+' eksplisit
+    # 1. Jika diawali tanda '+' eksplisit
     if raw_str.startswith("+"):
         if digits.startswith("62"):
-            return f"62{digits[2:]}"
+            sub = digits[2:]
+            if sub.startswith("0"):
+                sub = sub[1:]
+            return f"62{sub}"
         return digits
 
-    # Jika nomor Indonesia (diawali 0...)
+    # 2. Jika diawali 62 (misal 62812... atau 620812...)
+    if digits.startswith("62"):
+        sub = digits[2:]
+        if sub.startswith("0"):
+            sub = sub[1:]
+        return f"62{sub}"
+
+    # 3. Jika diawali 00 (international direct dialing prefix)
+    if digits.startswith("00"):
+        return digits[2:]
+
+    # 4. Jika nomor Indonesia lokal (diawali 0...)
     if digits.startswith("0"):
         return f"62{digits[1:]}"
 
-    # Jika diawali 62
-    if digits.startswith("62"):
-        return digits
-
-    # Jika diawali 8 (kebiasaan input orang Indonesia tanpa 0/62, misal 81234567890)
+    # 5. Jika diawali 8 (kebiasaan input orang Indonesia tanpa 0/62, misal 81234567890)
     if digits.startswith("8") and 9 <= len(digits) <= 13:
         return f"62{digits}"
 
-    # Nomor internasional lainnya yang sudah diawali kode negara
+    # 6. Nomor internasional lainnya yang sudah diawali kode negara
     return digits
 
 

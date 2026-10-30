@@ -19,14 +19,40 @@ export function normalizeWaPhone(raw) {
   const rawStr = String(raw || '').trim()
   const digits = rawStr.replace(/\D/g, '')
   if (!digits) return ''
-  // Jika diawali tanda plus internasional (misal +65, +1, +60, +62)
+
+  // 1. Diawali '+' internasional (misal +62, +65, +1)
   if (rawStr.startsWith('+')) {
-    if (digits.startsWith('62')) return digits.slice(2)
+    if (digits.startsWith('62')) {
+      let sub = digits.slice(2)
+      if (sub.startsWith('0')) sub = sub.slice(1)
+      return `62${sub}`
+    }
     return digits
   }
-  // Nomor Indonesia dengan awalan 62 atau 0
-  if (digits.startsWith('62')) return digits.slice(2)
-  if (digits.startsWith('0')) return digits.slice(1)
+
+  // 2. Diawali '62' (kode negara Indonesia tanpa '+', misal 62812... atau 620812...)
+  if (digits.startsWith('62')) {
+    let sub = digits.slice(2)
+    if (sub.startsWith('0')) sub = sub.slice(1)
+    return `62${sub}`
+  }
+
+  // 3. Diawali '00' (international direct dialing prefix)
+  if (digits.startsWith('00')) {
+    return digits.slice(2)
+  }
+
+  // 4. Diawali '0' (nomor lokal Indonesia umum, misal 0812...) -> ubah ke format internasional 62812...
+  if (digits.startsWith('0')) {
+    return `62${digits.slice(1)}`
+  }
+
+  // 5. Diawali '8' tanpa 0 dan tanpa kode negara (misal 81234567890) -> ubah ke format internasional 62812...
+  if (digits.startsWith('8') && digits.length >= 9 && digits.length <= 13) {
+    return `62${digits}`
+  }
+
+  // 6. Nomor internasional lainnya yang sudah diawali kode negara
   return digits
 }
 
@@ -39,8 +65,8 @@ export function waLink(phone, text) {
 
 export function isValidWaPhone(raw) {
   const digits = normalizeWaPhone(raw)
-  // Mendukung nomor lokal Indonesia maupun internasional (panjang 7 s.d. 16 digit)
-  return digits.length >= 7 && digits.length <= 16
+  // Mendukung nomor lokal Indonesia maupun internasional (panjang 8 s.d. 16 digit)
+  return digits.length >= 8 && digits.length <= 16
 }
 
 function itemLines(order = {}) {

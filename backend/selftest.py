@@ -89,6 +89,8 @@ def run():
     # Mock pengiriman WA: catat, jangan sentuh jaringan.
     real_send = orders_mod.send_wa_text
     orders_mod.send_wa_text = lambda phone, text: SENT.append((phone, text)) or True
+    wa_client.send_wa_text = lambda phone, text: SENT.append((phone, text)) or True
+    wa_mod.send_wa_text = lambda phone, text: SENT.append((phone, text)) or True
 
     def attempt(p):
         return lambda: asyncio.run(create_order(p, BackgroundTasks(), db))
@@ -96,7 +98,11 @@ def run():
     print("\n[1] Normalisasi nomor WhatsApp")
     check("0812... -> 62812...", normalize_phone("0812-3456-7890") == "6281234567890")
     check("+62 812 -> 62812...", normalize_phone("+62 812 3456 7890") == "6281234567890")
+    check("+62 0812 -> 62812...", normalize_phone("+62 0812 3456 7890") == "6281234567890")
+    check("620812... -> 62812...", normalize_phone("62081234567890") == "6281234567890")
     check("812... -> 62812...", normalize_phone("81234567890") == "6281234567890")
+    check("internasional +65... -> 65...", normalize_phone("+65 9123 4567") == "6591234567")
+    check("internasional 0065... -> 65...", normalize_phone("006591234567") == "6591234567")
     check("kosong -> ''", normalize_phone("-") == "")
 
     print("\n[2] Harga server adalah sumber kebenaran")
