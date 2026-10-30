@@ -45,6 +45,47 @@ function formatItemPrice(price) {
 const showWelcomeBubble = ref(true)
 const hasUserInteracted = ref(false)
 
+// Deteksi layar mobile (<= 768px)
+const isMobileScreen = ref(false)
+const isHopping = ref(false)
+let mobileHopTimer = null
+
+function checkMobileScreen() {
+  if (typeof window !== 'undefined') {
+    const isMob = window.innerWidth <= 768
+    const prevMob = isMobileScreen.value
+    isMobileScreen.value = isMob
+    if (isMob) {
+      // Pada mobile: kunci di posisi tengah (x = 600) & hadap depan
+      baristaX.value = 600
+      targetX.value = 600
+      facing.value = 'front'
+      isWalking.value = false
+      if (!mobileHopTimer) {
+        mobileHopTimer = setTimeout(triggerMobileHop, 1800)
+      }
+    } else {
+      if (mobileHopTimer) {
+        clearTimeout(mobileHopTimer)
+        mobileHopTimer = null
+      }
+      isHopping.value = false
+      if (prevMob && !hasUserInteracted.value && !idleTimer) {
+        idleTimer = setTimeout(runIdleAutoplay, 2500)
+      }
+    }
+  }
+}
+
+function triggerMobileHop() {
+  if (!isMobileScreen.value) return
+  isHopping.value = true
+  setTimeout(() => {
+    isHopping.value = false
+  }, 800)
+  mobileHopTimer = setTimeout(triggerMobileHop, 3600)
+}
+
 // Active hotspot
 const activeHotspotId = ref('papan-menu') // initial highlight
 
@@ -53,6 +94,9 @@ let idleTimer = null
 let autoPlayIndex = 0
 
 function handleScenePointerMove(e) {
+  // Pada mobile: jangan ikuti kursor/sentuhan layar (tetap di tengah)
+  if (isMobileScreen.value) return
+
   if (!sceneWrapperRef.value) return
   const rect = sceneWrapperRef.value.getBoundingClientRect()
   if (rect.width <= 0) return
@@ -138,7 +182,8 @@ function startLoop() {
 }
 
 function runIdleAutoplay() {
-  if (hasUserInteracted.value) return
+  // Hanya jalankan autoplay keliling meja di Desktop & Tablet
+  if (isMobileScreen.value || hasUserInteracted.value) return
   autoPlayIndex = (autoPlayIndex + 1) % HERO_HOTSPOTS.length
   const spot = HERO_HOTSPOTS[autoPlayIndex]
   targetX.value = spot.x + spot.width / 2
@@ -148,13 +193,29 @@ function runIdleAutoplay() {
 }
 
 onMounted(() => {
-  startLoop()
-  idleTimer = setTimeout(runIdleAutoplay, 3200)
+  checkMobileScreen()
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', checkMobileScreen)
+  }
+
+  if (isMobileScreen.value) {
+    baristaX.value = 600
+    targetX.value = 600
+    facing.value = 'front'
+    mobileHopTimer = setTimeout(triggerMobileHop, 2000)
+  } else {
+    startLoop()
+    idleTimer = setTimeout(runIdleAutoplay, 3200)
+  }
 })
 
 onUnmounted(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', checkMobileScreen)
+  }
   if (animFrameId) cancelAnimationFrame(animFrameId)
   if (idleTimer) clearTimeout(idleTimer)
+  if (mobileHopTimer) clearTimeout(mobileHopTimer)
 })
 </script>
 
@@ -259,9 +320,11 @@ onUnmounted(() => {
       <!-- 2. BARISTA CHARACTER (Standing behind counter at y=380) -->
       <g 
         class="barista-entity"
-        :transform="`translate(${baristaX}, ${230 + (isWalking ? Math.sin(walkStep * 0.4) * 3 : 0)})`"
+        :transform="`translate(${baristaX}, ${230 + (!isMobileScreen && isWalking ? Math.sin(walkStep * 0.4) * 3 : 0)})`"
         aria-hidden="true"
       >
+        <!-- Inner container for mobile hop animation (avoids overriding barista translate) -->
+        <g :class="{ 'barista-hop-inner': isMobileScreen && isHopping }">
         <!-- Barista Head & Cap -->
         <!-- Neck -->
         <rect x="-8" y="55" width="16" height="15" fill="#F0EAE1" stroke="#2C4A3E" stroke-width="2.5" />
@@ -305,7 +368,7 @@ onUnmounted(() => {
 
         <!-- Arms / Hands -->
         <!-- Right zone: holds steaming cup -->
-        <g v-if="holdsCup">
+        <g v-if="holdsCup && !isMobileScreen">
           <!-- Arm holding cup -->
           <path d="M25,85 Q46,92 40,118" fill="none" stroke="#F0EAE1" stroke-width="8" stroke-linecap="round" />
           <path d="M25,85 Q46,92 40,118" fill="none" stroke="#2C4A3E" stroke-width="2.5" stroke-linecap="round" />
@@ -320,29 +383,57 @@ onUnmounted(() => {
           <!-- Left Arm -->
           <path d="M-25,85 Q-42,105 -30,125" fill="none" stroke="#F0EAE1" stroke-width="7" stroke-linecap="round" />
           <path d="M-25,85 Q-42,105 -30,125" fill="none" stroke="#2C4A3E" stroke-width="2.5" stroke-linecap="round" />
-          <!-- Right Arm -->
-          <path d="M25,85 Q42,105 30,125" fill="none" stroke="#F0EAE1" stroke-width="7" stroke-linecap="round" />
-          <path d="M25,85 Q42,105 30,125" fill="none" stroke="#2C4A3E" stroke-width="2.5" stroke-linecap="round" />
+          <!-- Right Arm (Melambai menyapa di Mobile, istirahat di Desktop) -->
+          <g v-if="isMobileScreen" class="barista-waving-arm">
+            <path d="M25,85 Q46,65 40,42" fill="none" stroke="#F0EAE1" stroke-width="7" stroke-linecap="round" />
+            <path d="M25,85 Q46,65 40,42" fill="none" stroke="#2C4A3E" stroke-width="2.5" stroke-linecap="round" />
+            <circle cx="40" cy="38" r="6" fill="#F0EAE1" stroke="#2C4A3E" stroke-width="2" />
+          </g>
+          <g v-else>
+            <path d="M25,85 Q42,105 30,125" fill="none" stroke="#F0EAE1" stroke-width="7" stroke-linecap="round" />
+            <path d="M25,85 Q42,105 30,125" fill="none" stroke="#2C4A3E" stroke-width="2.5" stroke-linecap="round" />
+          </g>
         </g>
 
-        <!-- Speech Bubble "Selamat datang!" on initial opening -->
+        <!-- Speech Bubble Sapaan (Selalu menyapa di mobile & di posisi tengah simetris) -->
         <g 
-          v-if="showWelcomeBubble" 
+          v-if="showWelcomeBubble || isMobileScreen" 
           class="speech-bubble-doodle"
-          transform="translate(30, -70)"
+          :transform="isMobileScreen ? 'translate(-90, -72)' : 'translate(30, -70)'"
         >
           <!-- White background with thick dark border -->
-          <rect x="0" y="0" width="180" height="56" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="3" />
+          <rect x="0" y="0" width="180" height="54" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="3" />
           <!-- Speech tail pointing to barista mouth -->
-          <polygon points="10,56 26,56 6,74" fill="#FAF7F2" stroke="#2C4A3E" stroke-width="3" />
-          <line x1="10" y1="56" x2="26" y2="56" stroke="#FAF7F2" stroke-width="4" />
-          <!-- Text -->
-          <text x="90" y="26" fill="#2C4A3E" font-family="'Permanent Marker', cursive, sans-serif" font-size="16" font-weight="900" text-anchor="middle">
+          <polygon 
+            v-if="isMobileScreen"
+            points="82,54 98,54 90,70" 
+            fill="#FAF7F2" 
+            stroke="#2C4A3E" 
+            stroke-width="3" 
+          />
+          <polygon 
+            v-else
+            points="10,54 26,54 6,72" 
+            fill="#FAF7F2" 
+            stroke="#2C4A3E" 
+            stroke-width="3" 
+          />
+          <line 
+            :x1="isMobileScreen ? 82 : 10" 
+            y1="54" 
+            :x2="isMobileScreen ? 98 : 26" 
+            y2="54" 
+            stroke="#FAF7F2" 
+            stroke-width="4" 
+          />
+          <!-- Text Sapaan -->
+          <text x="90" y="25" fill="#2C4A3E" font-family="'Permanent Marker', cursive, sans-serif" font-size="15" font-weight="900" text-anchor="middle">
             SELAMAT DATANG!
           </text>
-          <text x="90" y="46" fill="#1C1917" font-family="'Space Mono', monospace" font-size="9" font-weight="800" letter-spacing="1" text-anchor="middle">
+          <text x="90" y="43" fill="#1C1917" font-family="'Space Mono', monospace" font-size="9" font-weight="800" letter-spacing="1" text-anchor="middle">
             SIKOPI SIAP RACIK
           </text>
+        </g>
         </g>
       </g>
 
@@ -411,12 +502,55 @@ onUnmounted(() => {
 }
 
 .speech-bubble-doodle {
-  animation: popSpeech 0.4s ease-out;
+  animation: popSpeech 0.35s ease-out;
 }
 
 @keyframes popSpeech {
-  0% { transform: translate(30px, -55px) scale(0.8); opacity: 0; }
-  100% { transform: translate(30px, -70px) scale(1); opacity: 1; }
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.barista-hop-inner {
+  animation: mobileBaristaHop 0.8s ease-in-out;
+}
+
+@keyframes mobileBaristaHop {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-9px);
+  }
+  50% {
+    transform: translateY(0);
+  }
+  75% {
+    transform: translateY(-4px);
+  }
+}
+
+.barista-waving-arm {
+  transform-origin: 25px 85px;
+  animation: baristaWave 2s ease-in-out infinite;
+}
+
+@keyframes baristaWave {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-10deg);
+  }
+  50% {
+    transform: rotate(10deg);
+  }
+  75% {
+    transform: rotate(-5deg);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

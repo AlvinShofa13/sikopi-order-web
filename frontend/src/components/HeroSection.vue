@@ -261,11 +261,16 @@ function scrollToCatalog() {
     right: 1rem;
   }
   .hero-center-cta {
-    bottom: 54px;
+    bottom: 78px;
+  }
+  .btn-lihat-menu {
+    padding: 10px 22px;
+    font-size: 12px;
   }
   .hero-mode-banner {
-    left: 1rem;
-    right: 1rem;
+    bottom: 12px;
+    left: 0.75rem;
+    right: 0.75rem;
   }
   .mode-info-tag {
     font-size: 10px;
