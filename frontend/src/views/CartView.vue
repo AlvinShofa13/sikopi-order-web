@@ -531,6 +531,11 @@ function continueShopping() {
   .cart-grid {
     grid-template-columns: 1fr;
   }
+  .cart-nav-actions {
+    order: -1;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+  }
 }
 
 /* Varian pada baris cart */

@@ -16,10 +16,18 @@ import { formatRupiah } from '@/utils/format'
 const DEFAULT_BRAND = 'SIKopi'
 
 export function normalizeWaPhone(raw) {
-  const digits = String(raw || '').replace(/\D/g, '')
+  const rawStr = String(raw || '').trim()
+  const digits = rawStr.replace(/\D/g, '')
   if (!digits) return ''
+  // Jika diawali tanda plus internasional (misal +65, +1, +60, +62)
+  if (rawStr.startsWith('+')) {
+    if (digits.startsWith('62')) return digits.slice(2)
+    return digits
+  }
+  // Nomor Indonesia dengan awalan 62 atau 0
   if (digits.startsWith('62')) return digits.slice(2)
-  return digits.replace(/^0/, '')
+  if (digits.startsWith('0')) return digits.slice(1)
+  return digits
 }
 
 /** Link "chat" WhatsApp. `''` bila nomor tidak valid. */
@@ -31,7 +39,8 @@ export function waLink(phone, text) {
 
 export function isValidWaPhone(raw) {
   const digits = normalizeWaPhone(raw)
-  return digits.length >= 9 && digits.length <= 13
+  // Mendukung nomor lokal Indonesia maupun internasional (panjang 7 s.d. 16 digit)
+  return digits.length >= 7 && digits.length <= 16
 }
 
 function itemLines(order = {}) {

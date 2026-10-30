@@ -266,6 +266,7 @@ function scrollToCatalog() {
   .btn-lihat-menu {
     padding: 10px 22px;
     font-size: 12px;
+    animation: ctaBounceMobile 1.6s ease-in-out infinite;
   }
   .hero-mode-banner {
     bottom: 12px;
@@ -276,6 +277,15 @@ function scrollToCatalog() {
     font-size: 10px;
     padding: 4px 8px;
     justify-content: center;
+  }
+}
+
+@keyframes ctaBounceMobile {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
   }
 }
 </style>

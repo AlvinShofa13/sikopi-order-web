@@ -53,7 +53,7 @@ function validateForm() {
     e.name = 'Nama pemesan wajib diisi agar kasir mudah mengenali pesanan Anda.'
   }
   if (!isValidWaPhone(customer.value.phone)) {
-    e.phone = 'Nomor WhatsApp wajib diisi (minimal 9 digit angka).'
+    e.phone = 'Nomor WhatsApp wajib diisi (minimal 7 digit angka, gunakan awalan 08 atau kode negara internasional).'
   }
   if (needsProof.value && !proofFile.value) {
     e.proof = 'Pesanan transfer wajib mengunggah bukti pembayaran.'
@@ -82,6 +82,53 @@ function removeProof() {
   proofFile.value = null
   proofPreview.value = ''
   proofError.value = ''
+}
+
+function downloadQrisImage() {
+  if (!qrisImage.value) {
+    showToast('Gambar QRIS belum tersedia.', 'error')
+    return
+  }
+
+  // Konversi QR ke canvas 600x600 px murni QR saja dengan solid white background agar mudah discan dari galeri m-banking/e-wallet
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    const canvas = document.createElement('canvas')
+    const size = 600
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Isi background putih solid
+    ctx.fillStyle = '#FFFFFF'
+    ctx.fillRect(0, 0, size, size)
+
+    // Margin putih sekeliling QR
+    const padding = 28
+    ctx.drawImage(img, padding, padding, size - padding * 2, size - padding * 2)
+
+    canvas.toBlob((blob) => {
+      const url = blob ? URL.createObjectURL(blob) : qrisImage.value
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `qris-sikopi-${orderCode.value || 'bayar'}-${store.grandTotal}.png`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      if (blob) URL.revokeObjectURL(url)
+      showToast('Gambar QRIS berhasil diunduh ke perangkat!', 'success')
+    }, 'image/png')
+  }
+  img.onerror = () => {
+    const link = document.createElement('a')
+    link.href = qrisImage.value
+    link.download = `qris-sikopi-${orderCode.value || 'bayar'}.png`
+    link.click()
+    showToast('Gambar QRIS berhasil diunduh!', 'success')
+  }
+  img.src = qrisImage.value
 }
 
 async function handleSubmitOrder() {
@@ -254,6 +301,21 @@ async function handleSubmitOrder() {
                     <span class="nominal-label">NOMINAL PAS:</span>
                     <span class="nominal-value">{{ formatRupiah(store.grandTotal) }}</span>
                   </div>
+
+                  <!-- Tombol Unduh QR Saja -->
+                  <button 
+                    type="button" 
+                    class="btn-download-qr font-mono" 
+                    title="Unduh gambar QR code untuk discan dari galeri m-banking / e-wallet"
+                    @click="downloadQrisImage"
+                  >
+                    <svg class="download-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                      <polyline points="7 10 12 15 17 10"/>
+                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    UNDUH GAMBAR QR (.PNG)
+                  </button>
                 </div>
 
                 <!-- Dropzone Upload Bukti -->
@@ -602,6 +664,35 @@ async function handleSubmitOrder() {
   font-size: 14px;
   font-weight: 800;
   color: var(--color-primary);
+}
+
+.btn-download-qr {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 220px;
+  padding: 8px 12px;
+  background-color: var(--color-peach);
+  color: var(--color-primary);
+  border: 1.5px solid var(--color-primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 140ms ease;
+  margin-top: 4px;
+}
+
+.btn-download-qr:hover {
+  background-color: var(--color-primary);
+  color: var(--color-cream);
+  transform: translateY(-1px);
+}
+
+.download-icon {
+  flex-shrink: 0;
 }
 
 /* Dropzone */

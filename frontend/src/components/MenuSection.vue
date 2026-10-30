@@ -15,7 +15,7 @@ const activeItemForNote = ref(null)
 const itemNoteInput = ref('')
 const itemVariantsInput = ref([])
 
-const defaultCategories = ['SEMUA', 'KOPI', 'NON-KOPI', 'PASTRY']
+const defaultCategories = ['SEMUA', 'FAVORIT', 'KOPI', 'NON-KOPI', 'PASTRY']
 
 const availableCategories = computed(() => {
   const set = new Set()
@@ -24,19 +24,24 @@ const availableCategories = computed(() => {
   })
   const custom = Array.from(set)
   if (custom.length > 0) {
-    return ['SEMUA', ...custom]
+    return ['SEMUA', 'FAVORIT', ...custom]
   }
   return defaultCategories
 })
 
 function matchesCategory(item, cat) {
   if (cat === 'SEMUA') return true
+  if (cat === 'FAVORIT') {
+    if (item.is_favorite) return true
+    const favIds = new Set(favoriteItems.value.map(f => f.id))
+    return favIds.has(item.id)
+  }
   const itemCat = (item.category || '').toUpperCase()
   return itemCat === cat
 }
 
 const filteredMenuItems = computed(() => {
-  return store.menuItems.filter(item => {
+  const list = store.menuItems.filter(item => {
     const q = searchQuery.value.toLowerCase().trim()
     const matchesSearch = !q || 
       item.name.toLowerCase().includes(q) ||
@@ -45,6 +50,16 @@ const filteredMenuItems = computed(() => {
     const matchesCat = matchesCategory(item, selectedCategory.value)
     return matchesSearch && matchesCat
   })
+
+  if (selectedCategory.value === 'FAVORIT') {
+    return [...list].sort((a, b) => {
+      const soldDiff = (Number(b.total_sold) || 0) - (Number(a.total_sold) || 0)
+      if (soldDiff !== 0) return soldDiff
+      return (a.name || '').localeCompare(b.name || '')
+    })
+  }
+
+  return list
 })
 
 // Menu favorit diurutkan otomatis dari yang paling banyak dibeli (terlaris)
@@ -556,11 +571,11 @@ function getItemType(item) {
                       <button 
                         v-else 
                         type="button" 
-                        class="btn-add-outlined" 
+                        class="btn-add-pesan font-mono" 
                         :disabled="item.is_available === false"
                         @click.stop="handleAdd(item)"
                       >
-                        +
+                        PESAN
                       </button>
                     </div>
                   </div>
@@ -1261,22 +1276,27 @@ function getItemType(item) {
 }
 
 /* Stepper & Add Button */
-.btn-add-outlined {
-  width: 26px;
+.btn-add-pesan {
+  padding: 4px 10px;
   height: 26px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   background-color: var(--color-white);
   border: 1.5px solid var(--color-primary);
   color: var(--color-primary);
-  font-size: 15px;
+  font-family: var(--font-mono);
+  font-size: 10px;
   font-weight: 800;
+  letter-spacing: 0.06em;
   cursor: pointer;
+  transition: all 120ms ease;
+  line-height: 1;
 }
 
-.btn-add-outlined:hover:not(:disabled) {
+.btn-add-pesan:hover:not(:disabled) {
   background-color: var(--color-peach);
+  color: var(--color-primary);
 }
 
 .stepper-box {
@@ -1351,13 +1371,13 @@ function getItemType(item) {
 }
 
 .cart-bar-inner {
-  background-color: var(--color-white);
-  border: 2px solid var(--color-primary);
+  background-color: var(--color-primary);
+  border: 2px solid var(--color-cream);
   padding: 12px 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
 }
 
 .cart-bar-meta {
@@ -1366,15 +1386,26 @@ function getItemType(item) {
   gap: 10px;
   font-size: 13px;
   font-weight: 800;
-  color: var(--color-primary);
+  color: var(--color-cream);
 }
 
 .cart-bar-qty {
   background-color: var(--color-peach);
   color: var(--color-primary);
   padding: 3px 8px;
-  border: 1.5px solid var(--color-primary);
+  border: 1.5px solid var(--color-cream);
   font-size: 11px;
+}
+
+.cart-bar-dot {
+  color: var(--color-cream);
+}
+
+.cart-bar-total {
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
 }
 
 .btn-cart-cta {
@@ -1382,14 +1413,15 @@ function getItemType(item) {
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  background-color: var(--color-primary);
-  color: var(--color-cream);
-  border: 2px solid var(--color-primary);
+  background-color: var(--color-cream);
+  color: var(--color-primary);
+  border: 2px solid var(--color-cream);
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
   cursor: pointer;
+  transition: all 140ms ease;
 }
 
 .btn-cart-cta:hover {
@@ -1398,33 +1430,101 @@ function getItemType(item) {
 }
 
 @media (max-width: 960px) {
-  .split-catalog-section {
-    grid-template-columns: 1fr;
+  /* Sembunyikan hero carousel favorit & hero poster menu kami di mobile */
+  .favorit-section {
+    display: none !important;
   }
   .catalog-left-sticky {
-    position: relative;
-    top: 0;
-    height: auto;
-    min-height: 480px;
-    border-right: none;
-    border-bottom: 2px solid var(--color-primary);
+    display: none !important;
+  }
+  .split-catalog-section {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow-x: hidden !important;
   }
   .catalog-right-panel {
     position: relative;
     top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
     height: auto;
     max-height: none;
+    overflow-x: hidden;
   }
   .panel-inner {
-    padding: 1.5rem 1rem;
+    padding: 1.25rem 0.85rem;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
     height: auto;
-    overflow: visible;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .search-box-wrap {
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 0.75rem;
+  }
+  .tuku-search-input {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .categories-tab-bar {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+    margin-bottom: 1rem;
+    scrollbar-width: none;
+  }
+  .categories-tab-bar::-webkit-scrollbar {
+    display: none;
+  }
+  .categories-tab-bar .segmented-tabs {
+    display: inline-flex;
+    flex-wrap: nowrap;
+    width: max-content;
   }
   .menu-items-scroll-area {
-    max-height: 60vh;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    max-height: none;
+    overflow-y: visible;
+    overflow-x: hidden;
+    padding-right: 0;
+    margin-bottom: 1.25rem;
   }
   .menu-items-grid {
     grid-template-columns: 1fr;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    gap: 10px;
+    box-sizing: border-box;
+  }
+  .menu-row-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    gap: 10px;
+  }
+  .item-thumb-box {
+    width: 52px;
+    height: 52px;
+    flex-shrink: 0;
+  }
+  .item-body {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
   }
 }
 

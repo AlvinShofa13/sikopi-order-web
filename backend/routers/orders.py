@@ -57,18 +57,38 @@ def new_order_code() -> str:
 
 
 def normalize_phone(raw: str | None) -> str:
-    """Normalisasi nomor Indonesia ke format wa.me (62xxx, tanpa '+' / spasi).
+    """Normalisasi nomor telepon (Indonesia & Internasional) ke format wa.me / Baileys.
 
-    '0812...' / '+62 812...' / '812...' -> '62812...'
+    - Indonesia: '0812...' / '+62 812...' / '812...' -> '62812...'
+    - Internasional: '+1 555 123 4567' -> '15551234567'
+    - Internasional: '+65 9123 4567' -> '6591234567'
+    - Internasional: '+60 12 345 6789' -> '60123456789'
     """
-    digits = re.sub(r"\D", "", raw or "")
+    raw_str = (raw or "").strip()
+    digits = re.sub(r"\D", "", raw_str)
     if not digits:
         return ""
+
+    # Jika diawali tanda '+' eksplisit
+    if raw_str.startswith("+"):
+        if digits.startswith("62"):
+            return f"62{digits[2:]}"
+        return digits
+
+    # Jika nomor Indonesia (diawali 0...)
+    if digits.startswith("0"):
+        return f"62{digits[1:]}"
+
+    # Jika diawali 62
     if digits.startswith("62"):
-        digits = digits[2:]
-    elif digits.startswith("0"):
-        digits = digits[1:]
-    return f"62{digits}"
+        return digits
+
+    # Jika diawali 8 (kebiasaan input orang Indonesia tanpa 0/62, misal 81234567890)
+    if digits.startswith("8") and 9 <= len(digits) <= 13:
+        return f"62{digits}"
+
+    # Nomor internasional lainnya yang sudah diawali kode negara
+    return digits
 
 
 @router.websocket("/ws")
@@ -586,10 +606,10 @@ async def create_order(
     # 4. Identitas & kontak pelanggan
     customer_name = (payload.customer.name or "").strip() or "Pelanggan"
     phone = normalize_phone(payload.customer.phone)
-    if len(phone) < 11 or len(phone) > 16:
+    if len(phone) < 8 or len(phone) > 16:
         raise HTTPException(
             status_code=422,
-            detail="Nomor WhatsApp tidak valid. Contoh: 0812-3456-7890 (minimal 9 digit).",
+            detail="Nomor WhatsApp tidak valid (minimal 8 digit angka, gunakan awalan 08 atau kode negara internasional misal +65, +1).",
         )
 
     # 5. Kode transaksi (dari client, divalidasi & dicek unik)

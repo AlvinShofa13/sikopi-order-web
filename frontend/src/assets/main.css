@@ -63,6 +63,8 @@
 
 html, body {
   min-height: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
   font-family: var(--font-family);
   background-color: var(--bg-primary);
   color: var(--color-primary);
@@ -73,6 +75,8 @@ html, body {
 
 #app {
   min-height: 100vh;
+  max-width: 100vw;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
