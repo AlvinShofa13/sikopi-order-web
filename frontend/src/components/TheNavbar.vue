@@ -2,6 +2,9 @@
 import { ref, computed } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
+import { api } from '@/services/api'
+import { isCustomImage } from '@/utils/format'
+import AppIcon from '@/components/icons/AppIcon.vue'
 
 const store = useOrderStore()
 const route = useRoute()
@@ -42,15 +45,47 @@ function handleTrackClick() {
     <div class="header-inner-fluid">
       <!-- Left: Brand Logo & Wordmark aligned directly to the far left (red mark) -->
       <div class="brand-area">
-        <RouterLink to="/" class="brand-link" title="Beranda SIKopi">
-          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square">
-            <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
-            <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
-            <line x1="6" y1="1" x2="6" y2="4" />
-            <line x1="10" y1="1" x2="10" y2="4" />
-            <line x1="14" y1="1" x2="14" y2="4" />
-          </svg>
-          <span class="brand-name">{{ store.brandName || 'SIKOPI' }}</span>
+        <RouterLink to="/" class="brand-link" :title="`Beranda ${store.brandName || 'SIKopi'}`">
+          <!-- 1. Jika dimasukkan logo gambar kustom (upload/URL), tampilkan gambar logo -->
+          <img
+            v-if="isCustomImage(store.brandIcon)"
+            :src="api.fileUrl(store.brandIcon)"
+            :alt="store.brandName || 'Logo'"
+            class="brand-logo-img"
+          />
+          <!-- 2. Jika bukan logo gambar, tampilkan ikon dinamis -->
+          <span v-else class="brand-icon-wrap">
+            <AppIcon
+              v-if="store.brandIcon && store.brandIcon !== 'coffee'"
+              :name="store.brandIcon"
+              :size="22"
+              stroke-width="2.2"
+              class="brand-app-icon"
+            />
+            <svg
+              v-else
+              class="brand-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="square"
+            >
+              <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+              <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+              <line x1="6" y1="1" x2="6" y2="4" />
+              <line x1="10" y1="1" x2="10" y2="4" />
+              <line x1="14" y1="1" x2="14" y2="4" />
+            </svg>
+          </span>
+
+          <!-- Nama brand dengan font dinamis (default Permanent Marker) -->
+          <span
+            class="brand-name"
+            :style="{ fontFamily: store.brandFontFamily }"
+          >
+            {{ store.brandName || 'SIKOPI' }}
+          </span>
         </RouterLink>
       </div>
 
@@ -154,6 +189,28 @@ function handleTrackClick() {
   width: 22px;
   height: 22px;
   stroke: var(--color-cream);
+  flex-shrink: 0;
+}
+
+.brand-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.brand-app-icon {
+  stroke: var(--color-cream);
+  color: var(--color-cream);
+}
+
+.brand-logo-img {
+  height: 30px;
+  width: auto;
+  max-width: 95px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
 }
 
 .brand-name {

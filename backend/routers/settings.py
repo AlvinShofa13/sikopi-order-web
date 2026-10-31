@@ -13,8 +13,9 @@ router = APIRouter(prefix="/settings", tags=["Application Settings"])
 
 
 class BrandingSettingsPayload(BaseModel):
-    brand_icon: Optional[str] = "leaf"
+    brand_icon: Optional[str] = "coffee"
     brand_name: Optional[str] = "SIKopi"
+    brand_font: Optional[str] = "default"
 
 
 def _get(db: Session, key: str, default: str) -> str:
@@ -24,10 +25,11 @@ def _get(db: Session, key: str, default: str) -> str:
 
 @router.get("/branding")
 def get_branding_settings(db: Session = Depends(get_db)):
-    """Retrieve current branding configuration (icon and name)."""
+    """Retrieve current branding configuration (icon, name, and font)."""
     return {
-        "brand_icon": _get(db, "brand_icon", "leaf"),
+        "brand_icon": _get(db, "brand_icon", "coffee"),
         "brand_name": _get(db, "brand_name", "SIKopi"),
+        "brand_font": _get(db, "brand_font", "default"),
     }
 
 
@@ -39,7 +41,8 @@ def get_public_settings(db: Session = Depends(get_db)):
 
     return {
         "brand_name": _get(db, "brand_name", "SIKopi"),
-        "brand_icon": _get(db, "brand_icon", "leaf"),
+        "brand_icon": _get(db, "brand_icon", "coffee"),
+        "brand_font": _get(db, "brand_font", "default"),
         "admin_whatsapp": normalize_phone(os.getenv("ADMIN_WHATSAPP")),
         **mode_payload(db),
     }
@@ -51,11 +54,12 @@ def update_branding_settings(
     db: Session = Depends(get_db),
     _admin: bool = Depends(require_admin),
 ):
-    """Update branding configuration (Admin). Default is leaf icon."""
-    target_icon = payload.brand_icon.strip() if payload.brand_icon else "leaf"
+    """Update branding configuration (Admin)."""
+    target_icon = payload.brand_icon.strip() if payload.brand_icon else "coffee"
     target_name = payload.brand_name.strip() if payload.brand_name else "SIKopi"
+    target_font = payload.brand_font.strip() if payload.brand_font else "default"
 
-    for key, value in (("brand_icon", target_icon), ("brand_name", target_name)):
+    for key, value in (("brand_icon", target_icon), ("brand_name", target_name), ("brand_font", target_font)):
         row = db.query(AppSetting).filter(AppSetting.key == key).first()
         if row:
             row.value = value
@@ -63,4 +67,4 @@ def update_branding_settings(
             db.add(AppSetting(key=key, value=value))
 
     db.commit()
-    return {"brand_icon": target_icon, "brand_name": target_name}
+    return {"brand_icon": target_icon, "brand_name": target_name, "brand_font": target_font}

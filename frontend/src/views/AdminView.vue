@@ -1,4 +1,4 @@
-﻿<script setup>
+<script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
@@ -999,9 +999,18 @@ function getOrderQrisUrl(ord) {
 }
 
 // ================= BRANDING & DYNAMIC ICON MANAGEMENT =================
+const presetFonts = [
+  { id: 'default', label: 'Permanent Marker (Default)', fontFamily: "'Permanent Marker', cursive, sans-serif", desc: 'Gaya tulisan tangan / spidol santai (bawaan resmi SIKopi saat ini).', isDefault: true },
+  { id: 'bebas-neue', label: 'Bebas Neue', fontFamily: "'Bebas Neue', sans-serif", desc: 'Huruf balok tinggi, tegas, dan modern untuk kedai kekinian.' },
+  { id: 'space-mono', label: 'Space Mono', fontFamily: "'Space Mono', monospace", desc: 'Gaya mesin tik retro monospaced berkarakter kuat.' },
+  { id: 'jakarta-sans', label: 'Plus Jakarta Sans', fontFamily: "'Plus Jakarta Sans', sans-serif", desc: 'Tipografi modern, bersih, minimalis, dan sangat jelas terbaca.' },
+  { id: 'fredoka', label: 'Fredoka Rounded', fontFamily: "'Fredoka', sans-serif", desc: 'Gaya membulat yang ramah, bersahabat, dan ceria.' }
+]
+
 const brandingForm = ref({
-  icon: store.brandIcon || 'leaf',
-  name: store.brandName || 'SIKopi'
+  icon: store.brandIcon || 'coffee',
+  name: store.brandName || 'SIKopi',
+  font: store.brandFont || 'default'
 })
 const isSavingBranding = ref(false)
 const isUploadingBrandLogo = ref(false)
@@ -1009,16 +1018,22 @@ const brandLogoFileInputRef = ref(null)
 const customIconUrlInput = ref('')
 
 const presetIcons = [
-  { id: 'leaf', label: 'Daun Organik (Default)', desc: 'Ikon resmi SIKopi, mencerminkan konsep ramah lingkungan dan alami.', isDefault: true },
-  { id: 'coffee', label: 'Cangkir Kopi', desc: 'Cocok untuk kedai kopi hangat & barista autentik.' },
+  { id: 'coffee', label: 'Cangkir Kopi (Default)', desc: 'Ikon cangkir kopi hangat & barista autentik.', isDefault: true },
+  { id: 'leaf', label: 'Daun Organik', desc: 'Ikon ramah lingkungan dan alami.' },
   { id: 'sparkles', label: 'Kilau / Spesial', desc: 'Memberikan sentuhan modern, premium, dan inovatif.' },
   { id: 'heart', label: 'Cinta & Peduli', desc: 'Nuansa ramah, penuh perhatian terhadap kesehatan.' },
   { id: 'shield-check', label: 'Kualitas Teruji', desc: 'Menjamin standar higienis dan kebersihan tertinggi.' }
 ]
 
-watch([() => store.brandIcon, () => store.brandName], ([newIcon, newName]) => {
-  brandingForm.value.icon = newIcon || 'leaf'
+const previewFontFamily = computed(() => {
+  const found = presetFonts.find(f => f.id === brandingForm.value.font)
+  return found ? found.fontFamily : "var(--font-display, 'Permanent Marker', cursive, sans-serif)"
+})
+
+watch([() => store.brandIcon, () => store.brandName, () => store.brandFont], ([newIcon, newName, newFont]) => {
+  brandingForm.value.icon = newIcon || 'coffee'
   brandingForm.value.name = newName || 'SIKopi'
+  brandingForm.value.font = newFont || 'default'
 }, { immediate: true })
 
 function selectPresetIcon(iconId) {
@@ -1068,20 +1083,21 @@ async function handleBrandLogoUpload(event) {
 }
 
 function removeCustomIcon() {
-  brandingForm.value.icon = 'leaf'
+  brandingForm.value.icon = 'coffee'
   customIconUrlInput.value = ''
-  showToast('Logo kustom dihapus, kembali ke default Daun Organik.')
+  showToast('Logo kustom dihapus, kembali ke default Cangkir Kopi.')
 }
 
 async function handleSaveBranding() {
   isSavingBranding.value = true
   try {
     const res = await store.updateBrandingSettings({
-      icon: brandingForm.value.icon || 'leaf',
-      name: (brandingForm.value.name || 'SIKopi').trim()
+      icon: brandingForm.value.icon || 'coffee',
+      name: (brandingForm.value.name || 'SIKopi').trim(),
+      font: brandingForm.value.font || 'default'
     })
     if (res && res.ok !== false) {
-      showToast('Ikon & Branding berhasil disimpan dan aktif di seluruh tab!')
+      showToast('Ikon, Logo, Font & Branding berhasil disimpan dan aktif di seluruh tab!')
     } else {
       showToast(res?.error || 'Gagal menyimpan konfigurasi branding ke server.', 'error')
     }
@@ -1093,16 +1109,17 @@ async function handleSaveBranding() {
 }
 
 async function handleResetBranding() {
-  if (!confirm('Kembalikan ikon ke Daun Organik (Default) dan nama brand ke SIKopi?')) return
+  if (!confirm('Kembalikan ikon ke Cangkir Kopi (Default), font ke Permanent Marker, dan nama brand ke SIKopi?')) return
 
   isSavingBranding.value = true
   try {
     const res = await store.resetBrandingToDefault()
     if (res && res.ok !== false) {
-      brandingForm.value.icon = 'leaf'
+      brandingForm.value.icon = 'coffee'
       brandingForm.value.name = 'SIKopi'
+      brandingForm.value.font = 'default'
       customIconUrlInput.value = ''
-      showToast('Ikon dan brand berhasil dikembalikan ke default!')
+      showToast('Ikon, font, dan brand berhasil dikembalikan ke default!')
     } else {
       showToast(res?.error || 'Gagal mengembalikan ke default.', 'error')
     }
@@ -1960,7 +1977,7 @@ async function handleResetBranding() {
                       <AppIcon v-else :name="brandingForm.icon || 'leaf'" :size="20" stroke-width="2" />
                     </div>
                     <div class="mock-brand-texts">
-                      <span class="mock-brand-name">{{ brandingForm.name || 'SIKopi' }}</span>
+                      <span class="mock-brand-name" :style="{ fontFamily: previewFontFamily }">{{ brandingForm.name || 'SIKopi' }}</span>
                       <span class="mock-brand-caption">Menu Hidangan Sehat</span>
                     </div>
                   </div>
@@ -2095,6 +2112,37 @@ async function handleResetBranding() {
                 </div>
               </div>
             </div>
+
+            <!-- 3. Font Selection Section -->
+            <div class="config-panel font-config-panel">
+              <div class="panel-header">
+                <h3 class="panel-title">3. Pilih Gaya Font Nama Brand</h3>
+                <span class="panel-sub">Atur jenis huruf untuk nama brand di navbar. Default adalah Permanent Marker (bawaan sekarang).</span>
+              </div>
+
+              <div class="preset-fonts-grid">
+                <button
+                  v-for="item in presetFonts"
+                  :key="item.id"
+                  type="button"
+                  class="preset-icon-card preset-font-card"
+                  :class="{ selected: brandingForm.font === item.id }"
+                  @click="brandingForm.font = item.id"
+                >
+                  <div class="preset-info">
+                    <div class="preset-title-row">
+                      <span class="preset-label font-preview-sample" :style="{ fontFamily: item.fontFamily }">
+                        {{ brandingForm.name || 'SIKopi' }}
+                      </span>
+                      <span v-if="item.isDefault" class="preset-badge-default">Default</span>
+                      <span v-if="brandingForm.font === item.id" class="preset-badge-active">Dipilih</span>
+                    </div>
+                    <div class="preset-font-name">Font: <strong>{{ item.label }}</strong></div>
+                    <p class="preset-desc">{{ item.desc }}</p>
+                  </div>
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- Bottom Footer Bar -->
@@ -2103,8 +2151,9 @@ async function handleResetBranding() {
               <span class="status-indicator-dot"></span>
               <span>
                 Status aktif: 
-                <strong>{{ isCustomImage(brandingForm.icon) ? 'Logo Gambar Kustom' : brandingForm.icon === 'leaf' ? 'Daun Organik (Default)' : brandingForm.icon }}</strong>
-                â€” Brand: <strong>{{ brandingForm.name || 'SIKopi' }}</strong>
+                <strong>{{ isCustomImage(brandingForm.icon) ? 'Logo Gambar Kustom' : brandingForm.icon === 'coffee' ? 'Cangkir Kopi (Default)' : brandingForm.icon }}</strong>
+                &bull; Brand: <strong>{{ brandingForm.name || 'SIKopi' }}</strong>
+                &bull; Font: <strong>{{ (presetFonts.find(f => f.id === brandingForm.font) || {}).label || brandingForm.font }}</strong>
               </span>
             </div>
             <div class="footer-action-buttons">
@@ -6186,6 +6235,32 @@ async function handleResetBranding() {
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--color-charcoal);
+}
+
+.font-config-panel {
+  grid-column: span 2;
+}
+
+.preset-fonts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.75rem;
+}
+
+.preset-font-card {
+  padding: 12px 14px;
+}
+
+.font-preview-sample {
+  font-size: 1.25rem !important;
+  line-height: 1.2;
+}
+
+.preset-font-name {
+  font-size: 0.74rem;
+  color: var(--color-primary);
+  margin-top: 4px;
+  margin-bottom: 2px;
 }
 
 .preset-badge-default {

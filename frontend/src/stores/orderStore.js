@@ -396,13 +396,27 @@ export const useOrderStore = defineStore('order', () => {
     return res.data.url
   }
 
-  // Dynamic Branding (Icon & Name)
-  const defaultBrandIcon = 'leaf'
+  // Dynamic Branding (Icon, Name & Font)
+  const defaultBrandIcon = 'coffee'
   const defaultBrandName = 'SIKopi'
+  const defaultBrandFont = 'default'
 
   const brandIcon = ref(defaultBrandIcon)
   const brandName = ref(defaultBrandName)
+  const brandFont = ref(defaultBrandFont)
   const adminWhatsapp = ref('')
+
+  const brandFontFamily = computed(() => {
+    const f = brandFont.value
+    if (!f || f === 'default' || f === 'permanent-marker') {
+      return "var(--font-display, 'Permanent Marker', cursive, sans-serif)"
+    }
+    if (f === 'bebas-neue') return "'Bebas Neue', sans-serif"
+    if (f === 'space-mono') return "var(--font-mono, 'Space Mono', monospace)"
+    if (f === 'jakarta-sans') return "var(--font-family, 'Plus Jakarta Sans', sans-serif)"
+    if (f === 'fredoka') return "'Fredoka', sans-serif"
+    return f
+  })
 
   // Satu-satunya mode operasional yang aktif (saling eksklusif).
   // Customer tidak memilih mode — channel pesanan selalu mengikuti ini.
@@ -427,6 +441,8 @@ export const useOrderStore = defineStore('order', () => {
     }
     const savedName = localStorage.getItem('sikopi_brand_name')
     if (savedName) brandName.value = savedName
+    const savedFont = localStorage.getItem('sikopi_brand_font')
+    if (savedFont) brandFont.value = savedFont
   } else {
     updateBrowserFavicon(defaultBrandIcon)
   }
@@ -456,6 +472,12 @@ export const useOrderStore = defineStore('order', () => {
             brandName.value = payload.brand_name
             if (typeof localStorage !== 'undefined') {
               localStorage.setItem('sikopi_brand_name', payload.brand_name)
+            }
+          }
+          if (payload.brand_font) {
+            brandFont.value = payload.brand_font
+            if (typeof localStorage !== 'undefined') {
+              localStorage.setItem('sikopi_brand_font', payload.brand_font)
             }
           }
         }
@@ -515,6 +537,12 @@ export const useOrderStore = defineStore('order', () => {
         localStorage.setItem('sikopi_brand_name', d.brand_name)
       }
     }
+    if (d.brand_font) {
+      brandFont.value = d.brand_font
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('sikopi_brand_font', d.brand_font)
+      }
+    }
     adminWhatsapp.value = d.admin_whatsapp || ''
     if (d.mode === 'preorder' || d.mode === 'pos') {
       activeMode.value = d.mode
@@ -551,25 +579,29 @@ export const useOrderStore = defineStore('order', () => {
     return res
   }
 
-  async function updateBrandingSettings({ icon, name } = {}) {
+  async function updateBrandingSettings({ icon, name, font } = {}) {
     const newIcon = icon !== undefined ? icon : brandIcon.value
     const newName = name !== undefined ? name : brandName.value
+    const newFont = font !== undefined ? font : brandFont.value
 
     brandIcon.value = newIcon
     brandName.value = newName
+    brandFont.value = newFont
     updateBrowserFavicon(newIcon)
 
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('sikopi_brand_icon', newIcon)
       localStorage.setItem('sikopi_brand_name', newName)
+      localStorage.setItem('sikopi_brand_font', newFont)
     }
 
-    broadcastChange('BRANDING_UPDATED', { brand_icon: newIcon, brand_name: newName })
+    broadcastChange('BRANDING_UPDATED', { brand_icon: newIcon, brand_name: newName, brand_font: newFont })
 
     try {
       const res = await api.settings.updateBranding({
         brand_icon: newIcon,
-        brand_name: newName
+        brand_name: newName,
+        brand_font: newFont
       })
       return res
     } catch (err) {
@@ -578,7 +610,7 @@ export const useOrderStore = defineStore('order', () => {
   }
 
   async function resetBrandingToDefault() {
-    return await updateBrandingSettings({ icon: defaultBrandIcon, name: defaultBrandName })
+    return await updateBrandingSettings({ icon: defaultBrandIcon, name: defaultBrandName, font: defaultBrandFont })
   }
 
   /**
@@ -667,6 +699,8 @@ export const useOrderStore = defineStore('order', () => {
   return {
     brandIcon,
     brandName,
+    brandFont,
+    brandFontFamily,
     adminWhatsapp,
     updateBrandingSettings,
     resetBrandingToDefault,
