@@ -126,6 +126,16 @@ def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK) -> str:
             "",
             f"Pesanan Anda sudah selesai. Terima kasih sudah berkunjung di {brand}!",
         ],
+        "Batal": [
+            head,
+            "",
+            "Pesanan Anda telah dibatalkan oleh pihak kedai. Mohon hubungi kasir/admin bila ada pertanyaan atau kendala.",
+        ],
+        "Dibatalkan": [
+            head,
+            "",
+            "Pesanan Anda telah dibatalkan oleh pihak kedai. Mohon hubungi kasir/admin bila ada pertanyaan atau kendala.",
+        ],
     }
     body = mapping.get(status, [head, "", f"Status pesanan Anda: {status}"])
     return "\n".join(line for line in body if line is not None)

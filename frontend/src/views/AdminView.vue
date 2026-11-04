@@ -444,7 +444,8 @@ const WA_STATUS_OPTIONS = [
   'Diterima & Disiapkan',
   'Sedang Disiapkan',
   'Siap Diambil',
-  'Selesai'
+  'Selesai',
+  'Batal'
 ]
 
 function sendWaStatus(order, status) {
@@ -842,6 +843,7 @@ async function revertPaidStatus(order) {
 function normalizePrepStatus(status) {
   if (status === 'Siap Diambil' || status === 'Siap Disajikan') return 'Siap Diambil'
   if (status === 'Selesai') return 'Selesai'
+  if (status === 'Batal' || status === 'Dibatalkan') return 'Batal'
   return 'Sedang Disiapkan'
 }
 
@@ -849,6 +851,7 @@ function getPrepClass(status) {
   const s = normalizePrepStatus(status)
   if (s === 'Siap Diambil') return 'prep-ready'
   if (s === 'Selesai') return 'prep-done'
+  if (s === 'Batal') return 'prep-cancelled'
   return 'prep-cooking'
 }
 
@@ -876,18 +879,59 @@ async function handleUpdatePrepStatus(order, newStatus) {
   }
 }
 
-// Pembatalan pesanan (Admin saja, permanen)
+// 1. Batalkan pesanan (Ubah status ke "Batal", data tetap tersimpan di riwayat & database)
 async function handleCancelOrder(order) {
   if (!order) return
-  if (!confirm(`Batalkan pesanan #${order.orderId} (${order.customer?.name || 'Pelanggan'})? Data dihapus permanen.`)) return
+  if (!confirm(`Batalkan pesanan #${order.orderId} (${order.customer?.name || 'Pelanggan'})? Status akan diubah menjadi 'Batal' dan data tetap tersimpan di riwayat pesanan.`)) return
   try {
-    const res = await api.orders.remove(order.orderId)
-    if (!res.ok) throw new Error(res.error || 'Gagal membatalkan.')
-    store.orderHistory = store.orderHistory.filter(o => o.orderId !== order.orderId)
-    if (selectedOrder.value?.orderId === order.orderId) selectedOrder.value = null
-    showToast(`Pesanan #${order.orderId} dibatalkan & dihapus.`)
+    order.orderStatus = 'Batal'
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = 'Batal'
+    }
+    const res = await api.orders.updateStatus(order.orderId, { order_status: 'Batal' })
+    if (!res.ok) throw new Error(res.error || 'Gagal membatalkan pesanan.')
+    
+    if (store.broadcastOrderStatusUpdate) {
+      store.broadcastOrderStatusUpdate(order.orderId, { orderStatus: 'Batal' })
+    }
+    showToast(`Pesanan #${order.orderId} dibatalkan. Data tetap tersimpan di riwayat.`)
   } catch (err) {
     showToast(err.message || 'Gagal membatalkan pesanan.', 'error')
+  }
+}
+
+// 2. Aktifkan kembali pesanan yang sebelumnya dibatalkan
+async function handleRestoreOrder(order) {
+  if (!order) return
+  try {
+    order.orderStatus = 'Sedang Disiapkan'
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = 'Sedang Disiapkan'
+    }
+    const res = await api.orders.updateStatus(order.orderId, { order_status: 'Sedang Disiapkan' })
+    if (!res.ok) throw new Error(res.error || 'Gagal mengaktifkan kembali pesanan.')
+    
+    if (store.broadcastOrderStatusUpdate) {
+      store.broadcastOrderStatusUpdate(order.orderId, { orderStatus: 'Sedang Disiapkan' })
+    }
+    showToast(`Pesanan #${order.orderId} diaktifkan kembali.`)
+  } catch (err) {
+    showToast(err.message || 'Gagal mengaktifkan pesanan.', 'error')
+  }
+}
+
+// 3. Hapus permanen pesanan dari database (Khusus Admin untuk pesanan testing / sampah)
+async function handleDeleteOrder(order) {
+  if (!order) return
+  if (!confirm(`Hapus permanen pesanan #${order.orderId} (${order.customer?.name || 'Pelanggan'}) dari database? Tindakan ini tidak dapat dibatalkan.`)) return
+  try {
+    const res = await api.orders.remove(order.orderId)
+    if (!res.ok) throw new Error(res.error || 'Gagal menghapus pesanan.')
+    store.orderHistory = store.orderHistory.filter(o => o.orderId !== order.orderId)
+    if (selectedOrder.value?.orderId === order.orderId) selectedOrder.value = null
+    showToast(`Pesanan #${order.orderId} dihapus permanen.`, 'success')
+  } catch (err) {
+    showToast(err.message || 'Gagal menghapus pesanan.', 'error')
   }
 }
 
@@ -1543,6 +1587,7 @@ async function handleResetBranding() {
                       <option value="Sedang Disiapkan">Sedang Disiapkan</option>
                       <option value="Siap Diambil">Siap Diambil</option>
                       <option value="Selesai">Selesai</option>
+                      <option value="Batal">Batal</option>
                     </select>
                   </td>
                   <td class="col-actions">
@@ -1561,21 +1606,46 @@ async function handleResetBranding() {
                         type="button" 
                         class="btn-act btn-print" 
                         @click="handlePrintReceipt(ord, 'both')"
-                        :disabled="isPrinting || !ord.payment?.paid"
-                        :title="ord.payment?.paid ? 'Cetak 2 Struk Thermal (Dapur & Pelanggan)' : 'Aktif setelah pembayaran lunas'"
+                        :disabled="isPrinting || !ord.payment?.paid || ord.orderStatus === 'Batal' || ord.orderStatus === 'Dibatalkan'"
+                        :title="ord.orderStatus === 'Batal' || ord.orderStatus === 'Dibatalkan' ? 'Pesanan telah dibatalkan' : ord.payment?.paid ? 'Cetak 2 Struk Thermal (Dapur & Pelanggan)' : 'Aktif setelah pembayaran lunas'"
                       >
                         <AppIcon name="printer" :size="14" />
                         <span>Cetak Struk</span>
                       </button>
 
+                      <!-- Tombol Batal: Mengubah status ke Batal, data tetap tersimpan di riwayat -->
                       <button 
+                        v-if="ord.orderStatus !== 'Batal' && ord.orderStatus !== 'Dibatalkan'"
                         type="button" 
                         class="btn-act btn-cancel-order" 
                         @click="handleCancelOrder(ord)"
-                        title="Batalkan & hapus pesanan (Admin)"
+                        title="Batalkan pesanan (data tetap tersimpan di riwayat)"
+                      >
+                        <AppIcon name="close" :size="14" />
+                        <span>Batal</span>
+                      </button>
+
+                      <!-- Tombol Aktifkan Lagi: Jika pesanan sudah dibatalkan, bisa dipulihkan -->
+                      <button 
+                        v-else
+                        type="button" 
+                        class="btn-act btn-restore-order" 
+                        @click="handleRestoreOrder(ord)"
+                        title="Pulihkan dan aktifkan kembali pesanan ini"
+                      >
+                        <AppIcon name="rotate-ccw" :size="14" />
+                        <span>Aktifkan</span>
+                      </button>
+
+                      <!-- Tombol Hapus: Menghapus permanen dari database -->
+                      <button 
+                        type="button" 
+                        class="btn-act btn-delete-order" 
+                        @click="handleDeleteOrder(ord)"
+                        title="Hapus permanen pesanan dari database"
                       >
                         <AppIcon name="trash" :size="14" />
-                        <span>Batal</span>
+                        <span>Hapus</span>
                       </button>
                     </div>
                   </td>
@@ -2556,6 +2626,16 @@ async function handleResetBranding() {
                 >
                   <AppIcon name="check" :size="14" />
                   <span>Selesai</span>
+                </button>
+
+                <button
+                  type="button"
+                  class="btn-prep-opt opt-cancelled"
+                  :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Batal' }"
+                  @click="handleCancelOrder(selectedOrder)"
+                >
+                  <AppIcon name="close" :size="14" />
+                  <span>Batal</span>
                 </button>
               </div>
 
@@ -3809,13 +3889,33 @@ async function handleResetBranding() {
 }
 
 .btn-act.btn-cancel-order {
-  background-color: transparent;
-  color: #C53030;
-  border: 1px solid #FEB2B2;
+  background-color: #FFF7ED;
+  color: #C2410C;
+  border: 1px solid #FDBA74;
 }
 
 .btn-act.btn-cancel-order:hover {
-  background-color: #FFF5F5;
+  background-color: #FFEDD5;
+}
+
+.btn-act.btn-restore-order {
+  background-color: #EFF6FF;
+  color: #1D4ED8;
+  border: 1px solid #BFDBFE;
+}
+
+.btn-act.btn-restore-order:hover {
+  background-color: #DBEAFE;
+}
+
+.btn-act.btn-delete-order {
+  background-color: transparent;
+  color: #DC2626;
+  border: 1px solid #FECACA;
+}
+
+.btn-act.btn-delete-order:hover {
+  background-color: #FEE2E2;
 }
 
 /* ================= MENU MANAGEMENT GRID ================= */
@@ -5290,10 +5390,22 @@ async function handleResetBranding() {
   border: 1px solid var(--border-medium);
 }
 
+.prep-status-badge.prep-cancelled {
+  background-color: #FEE2E2;
+  color: #991B1B;
+  border: 1px solid #FCA5A5;
+}
+
 .prep-pill-group {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .prep-pill-group {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 .btn-prep-opt {
@@ -5336,6 +5448,18 @@ async function handleResetBranding() {
   border-color: #475569;
 }
 
+.btn-prep-opt.opt-cancelled:hover:not(.active) {
+  border-color: #FCA5A5;
+  color: #991B1B;
+}
+
+.btn-prep-opt.opt-cancelled.active {
+  background-color: #DC2626;
+  border-color: #DC2626;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+}
+
 /* Preparation Select in Orders Table */
 .col-prep-status {
   text-align: center;
@@ -5369,6 +5493,13 @@ async function handleResetBranding() {
   background-color: var(--color-primary-soft);
   color: var(--color-primary);
   border-color: var(--border-medium);
+}
+
+.select-prep-status.prep-cancelled {
+  background-color: #FEE2E2;
+  color: #991B1B;
+  border-color: #FCA5A5;
+  font-weight: 700;
 }
 
 /* Detail Items Box */
