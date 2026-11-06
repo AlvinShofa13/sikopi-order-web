@@ -680,15 +680,18 @@ async function saveMenuForm() {
     return
   }
 
-  if (isEditingMenu.value) {
-    await store.updateMenuItem(menuForm.value.id, menuForm.value)
-    showToast(`Menu "${menuForm.value.name}" berhasil diperbarui.`)
-  } else {
-    await store.addMenuItem(menuForm.value)
-    showToast(`Menu "${menuForm.value.name}" berhasil ditambahkan.`)
+  try {
+    if (isEditingMenu.value) {
+      await store.updateMenuItem(menuForm.value.id, menuForm.value)
+      showToast(`Menu "${menuForm.value.name}" berhasil diperbarui.`)
+    } else {
+      await store.addMenuItem(menuForm.value)
+      showToast(`Menu "${menuForm.value.name}" berhasil ditambahkan.`)
+    }
+    showMenuModal.value = false
+  } catch (err) {
+    showToast(err.message || 'Gagal menyimpan menu.', 'error')
   }
-
-  showMenuModal.value = false
 }
 
 // ---- Builder paket bundling di form menu ----
@@ -737,8 +740,12 @@ async function handleToggleAvailability(menuId, currentStatus) {  await store.to
 
 async function handleDeleteMenu(item) {
   if (confirm(`Apakah Anda yakin ingin menghapus menu "${item.name}"?`)) {
-    await store.deleteMenuItem(item.id)
-    showToast(`Menu "${item.name}" berhasil dihapus.`)
+    try {
+      await store.deleteMenuItem(item.id)
+      showToast(`Menu "${item.name}" berhasil dihapus.`)
+    } catch (err) {
+      showToast(err.message || 'Gagal menghapus menu.', 'error')
+    }
   }
 }
 

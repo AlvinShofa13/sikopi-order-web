@@ -69,22 +69,22 @@ export function generateOrderCode() {
 
 // Isi paket bundling ke JSON string backend ('[{"id": "menu-x", "quantity": 2}]').
 function serializeBundleItems(raw) {
-  if (typeof raw === 'string') return raw
-  if (!Array.isArray(raw)) return ''
+  if (typeof raw === 'string') return raw.trim() || null
+  if (!Array.isArray(raw)) return null
   const lines = raw
     .filter((l) => l && l.id && Number(l.quantity || l.qty || 0) > 0)
     .map((l) => ({ id: l.id, quantity: Number(l.quantity || l.qty) }))
-  return lines.length > 0 ? JSON.stringify(lines) : ''
+  return lines.length > 0 ? JSON.stringify(lines) : null
 }
 
 // Varian menu ke JSON string backend ('[{"name": "Es", "price": 0}]').
 function serializeVariants(raw) {
-  if (typeof raw === 'string') return raw
-  if (!Array.isArray(raw)) return ''
+  if (typeof raw === 'string') return raw.trim() || null
+  if (!Array.isArray(raw)) return null
   const rows = raw
     .filter((v) => v && (v.name || '').trim())
     .map((v) => ({ name: (v.name || '').trim(), price: Number(v.price || 0) || 0 }))
-  return rows.length > 0 ? JSON.stringify(rows) : ''
+  return rows.length > 0 ? JSON.stringify(rows) : null
 }
 
 // Identitas baris keranjang: menu yang sama dengan varian berbeda = baris berbeda.
@@ -139,8 +139,11 @@ export const useOrderStore = defineStore('order', () => {
       variants: serializeVariants(newItemData.variants),
       total_sold: 0
     }
+    const res = await api.menu.create(item)
+    if (!res.ok) {
+      throw new Error(res.error || 'Gagal menyimpan menu ke database.')
+    }
     menuItems.value.push(item)
-    api.menu.create(item)
     broadcastChange('MENU_UPDATED', { menuId: item.id })
     return item
   }
@@ -154,21 +157,28 @@ export const useOrderStore = defineStore('order', () => {
       const variantsStr = 'variants' in updatedData
         ? serializeVariants(updatedData.variants)
         : menuItems.value[idx].variants
-      menuItems.value[idx] = {
+      const updatedItem = {
         ...menuItems.value[idx],
         ...updatedData,
         price: Number(updatedData.price) || menuItems.value[idx].price,
         bundle_items: bundleStr,
         variants: variantsStr
       }
-      api.menu.update(id, { ...updatedData, bundle_items: bundleStr, variants: variantsStr })
+      const res = await api.menu.update(id, { ...updatedData, bundle_items: bundleStr, variants: variantsStr })
+      if (!res.ok) {
+        throw new Error(res.error || 'Gagal memperbarui menu di database.')
+      }
+      menuItems.value[idx] = updatedItem
       broadcastChange('MENU_UPDATED', { menuId: id })
     }
   }
 
   async function deleteMenuItem(id) {
+    const res = await api.menu.delete(id)
+    if (!res.ok) {
+      throw new Error(res.error || 'Gagal menghapus menu dari database.')
+    }
     menuItems.value = menuItems.value.filter((m) => m.id !== id)
-    api.menu.delete(id)
     broadcastChange('MENU_UPDATED', { menuId: id })
   }
 

@@ -53,7 +53,7 @@ def _normalize_variants(variants) -> str | None:
     Mengembalikan JSON string '[{"name": ..., "price": ...}]' atau None
     (tanpa varian). Melempar 422 bila tidak valid.
     """
-    if variants is None:
+    if not variants or (isinstance(variants, str) and not variants.strip()):
         return None
     try:
         rows = json.loads(variants) if isinstance(variants, str) else variants
