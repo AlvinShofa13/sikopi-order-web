@@ -4,6 +4,20 @@
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8005/api'
+const GFORM_FALLBACK_URL = (import.meta.env.VITE_GFORM_FALLBACK_URL || '').trim()
+const REQUEST_TIMEOUT_MS = 8000
+
+let isRedirectingToFallback = false
+
+function redirectToGformFallback() {
+  if (!GFORM_FALLBACK_URL || isRedirectingToFallback) return
+  if (typeof window === 'undefined') return
+  // Jangan arahkan halaman admin ke GForm pelanggan agar admin tetap bisa cek status
+  if (window.location.pathname.startsWith('/admin')) return
+
+  isRedirectingToFallback = true
+  window.location.replace(GFORM_FALLBACK_URL)
+}
 
 async function request(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`
@@ -26,9 +40,17 @@ async function request(endpoint, options = {}) {
     headers['Content-Type'] = 'application/json'
   }
 
+  const controller = !options.signal && typeof AbortController !== 'undefined'
+    ? new AbortController()
+    : null
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    : null
+
   const config = {
     ...options,
-    headers
+    headers,
+    ...(controller ? { signal: controller.signal } : {})
   }
 
   try {
@@ -37,6 +59,9 @@ async function request(endpoint, options = {}) {
       return { ok: true, data: null }
     }
     if (!res.ok) {
+      if (!options.skipFallback && [502, 503, 504].includes(res.status)) {
+        redirectToGformFallback()
+      }
       let errorMsg = `HTTP Error ${res.status}`
       try {
         const errorData = await res.json()
@@ -49,7 +74,12 @@ async function request(endpoint, options = {}) {
     const data = await res.json()
     return { ok: true, data }
   } catch (err) {
+    if (!options.skipFallback) {
+      redirectToGformFallback()
+    }
     return { ok: false, error: err.message || 'Gagal terhubung ke server backend FastAPI' }
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
   }
 }
 
