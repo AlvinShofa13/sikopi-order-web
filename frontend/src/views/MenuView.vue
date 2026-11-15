@@ -1390,13 +1390,31 @@ function goToCart() {
   .variant-chip {
     width: 100%;
     min-width: 0;
-    justify-content: flex-start;
+    box-sizing: border-box;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    text-align: left;
+    gap: 2px;
     padding: 8px 9px;
     font-size: 0.78rem;
+    line-height: 1.25;
+    overflow: hidden;
+  }
+
+  .variant-chip .variant-check {
+    display: none;
+  }
+
+  .variant-chip > span:nth-child(2) {
+    width: 100%;
+    overflow-wrap: break-word;
+    word-break: break-word;
   }
 
   .variant-price {
-    margin-left: auto;
+    margin-left: 0;
+    font-size: 0.72rem;
     white-space: nowrap;
   }
 }

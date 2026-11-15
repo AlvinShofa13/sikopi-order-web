@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, bundleContentsLabel, bundleSavings, parseVariants, variantExtras } from '@/utils/format'
+import { formatRupiah, bundleContentsLabel, bundleSavings, parseVariants, parseVariantGroups, variantExtras } from '@/utils/format'
 import { generateQrisDataUrl } from '@/utils/qris'
 import { isBluetoothSupported, printReceiptViaBluetooth } from '@/utils/bluetoothPrinter'
 import AppIcon from '@/components/icons/AppIcon.vue'
@@ -57,9 +57,29 @@ function posLineTotal(line) {
   return (Number(line.price || 0) + posLineExtras(line)) * Number(line.qty || 0)
 }
 
-function togglePosVariant(line, name) {
-  const idx = line.variants.indexOf(name)
-  if (idx === -1) line.variants.push(name)
+function posCartQty(menuId) {
+  return cartLines.value
+    .filter(l => l.id === menuId)
+    .reduce((sum, l) => sum + Number(l.qty || 0), 0)
+}
+
+function posMenuGroups(line) {
+  const menu = posMenuOf(line)
+  return menu ? parseVariantGroups(menu.variants) : []
+}
+
+function selectPosGroupOption(line, group, optKey) {
+  if (!group.multiple) {
+    const groupKeys = new Set(group.options.map(o => o.key))
+    const already = line.variants.includes(optKey)
+    line.variants = line.variants.filter(k => !groupKeys.has(k))
+    if (!already || group.required) {
+      line.variants.push(optKey)
+    }
+    return
+  }
+  const idx = line.variants.indexOf(optKey)
+  if (idx === -1) line.variants.push(optKey)
   else line.variants.splice(idx, 1)
 }
 
@@ -223,9 +243,11 @@ function startNewOrder() {
           :key="m.id"
           type="button"
           class="pos-menu-card"
+          :class="{ 'is-selected': posCartQty(m.id) > 0 }"
           @click="addToPosCart(m)"
           :title="`Tambah ${m.name}`"
         >
+          <span v-if="posCartQty(m.id) > 0" class="pos-selected-badge">✓ {{ posCartQty(m.id) }}x</span>
           <img v-if="m.image" :src="api.fileUrl(m.image)" :alt="m.name" class="pos-menu-img" />
           <span class="pos-menu-name">
             {{ m.name }}
@@ -341,17 +363,25 @@ function startNewOrder() {
               </div>
               <span class="pos-line-subtotal font-mono">{{ formatRupiah(posLineTotal(l)) }}</span>
             </div>
-            <div v-if="posMenuOf(l) && parseVariants(posMenuOf(l).variants).length > 0" class="pos-variant-row">
-              <button
-                v-for="v in parseVariants(posMenuOf(l).variants)"
-                :key="v.name"
-                type="button"
-                class="pos-variant-chip"
-                :class="{ active: l.variants.includes(v.name) }"
-                @click="togglePosVariant(l, v.name)"
-              >
-                {{ v.name }}{{ v.price > 0 ? ` +${formatRupiah(v.price)}` : '' }}
-              </button>
+            <div v-if="posMenuGroups(l).length > 0" class="pos-variant-groups">
+              <div v-for="(grp, gIdx) in posMenuGroups(l)" :key="grp.group || gIdx" class="pos-variant-group">
+                <span v-if="grp.group" class="pos-variant-group-label">
+                  {{ grp.group }}<span v-if="grp.required" class="pos-req-star">*</span>
+                </span>
+                <div class="pos-variant-row">
+                  <button
+                    v-for="opt in grp.options"
+                    :key="opt.key"
+                    type="button"
+                    class="pos-variant-chip"
+                    :class="{ active: l.variants.includes(opt.key) }"
+                    @click="selectPosGroupOption(l, grp, opt.key)"
+                  >
+                    <span class="pos-var-check">{{ l.variants.includes(opt.key) ? '✓' : '' }}</span>
+                    <span>{{ opt.name }}{{ opt.price > 0 ? ` +${formatRupiah(opt.price)}` : '' }}</span>
+                  </button>
+                </div>
+              </div>
             </div>
             <input
               v-model="l.notes"
@@ -463,6 +493,7 @@ function startNewOrder() {
   padding-right: 2px;
 }
 .pos-menu-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -473,10 +504,27 @@ function startNewOrder() {
   background-color: var(--bg-primary);
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s ease, transform 0.1s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.1s ease;
 }
 .pos-menu-card:hover { border-color: var(--color-primary); }
 .pos-menu-card:active { transform: scale(0.98); }
+.pos-menu-card.is-selected {
+  border: 2px solid var(--color-primary, #2C4A3E);
+  background-color: #EEF5F1;
+}
+.pos-selected-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  background-color: var(--color-primary, #2C4A3E);
+  color: #FFFFFF;
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18);
+}
 .pos-menu-img {
   width: 100%;
   height: 84px;
@@ -615,24 +663,59 @@ function startNewOrder() {
   line-height: 1;
 }
 .pos-line-subtotal { font-size: 0.85rem; font-weight: 700; }
+.pos-variant-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pos-variant-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pos-variant-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pos-req-star {
+  color: #DC2626;
+  margin-left: 2px;
+}
 .pos-variant-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 6px;
 }
 .pos-variant-chip {
-  padding: 4px 10px;
-  border: 1px solid var(--border-medium);
-  border-radius: var(--radius-full);
-  background-color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  border: 1.5px solid #CBD5E1;
+  border-radius: 6px;
+  background-color: #FFFFFF;
+  color: var(--color-text-main, #1C1917);
   font-size: 0.72rem;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.12s ease;
+}
+.pos-variant-chip:hover {
+  border-color: var(--color-primary, #2C4A3E);
 }
 .pos-variant-chip.active {
-  border-color: var(--color-primary);
-  background-color: var(--color-primary-soft);
+  border-color: var(--color-primary, #2C4A3E);
+  background-color: var(--color-primary, #2C4A3E);
+  color: #FFFFFF;
   font-weight: 700;
+}
+.pos-var-check {
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 .pos-line-note {
   width: 100%;
