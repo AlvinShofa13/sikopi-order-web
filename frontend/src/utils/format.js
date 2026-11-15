@@ -50,9 +50,9 @@ export function bundleSavings(bundleRaw, menuList = [], bundlePrice = 0) {
   return { sum, savings: savings > 0 ? savings : 0 }
 }
 
-// Varian menu: dinormalisasi dari JSON string / array backend
-// '[{"name": "Es", "price": 0}]' -> [{ name, price }].
-export function parseVariants(raw) {
+// Varian menu (mendukung format grup dan format flat lama).
+// -> [{ group, required, multiple, options: [{ name, price, key }] }]
+export function parseVariantGroups(raw) {
   let arr = raw
   if (typeof raw === 'string') {
     if (!raw.trim()) return []
@@ -62,18 +62,79 @@ export function parseVariants(raw) {
       return []
     }
   }
-  if (!Array.isArray(arr)) return []
+  if (!Array.isArray(arr) || arr.length === 0) return []
+
+  const isGrouped = arr.some((r) => r && typeof r === 'object' && ('group' in r || 'options' in r))
+  if (isGrouped) {
+    const seenGroups = new Set()
+    const groups = []
+    for (const g of arr) {
+      if (!g || typeof g !== 'object') continue
+      const groupName = (g.group || '').trim()
+      if (!groupName || seenGroups.has(groupName)) continue
+      seenGroups.add(groupName)
+      const seenOpts = new Set()
+      const options = (Array.isArray(g.options) ? g.options : [])
+        .filter((o) => {
+          const n = (o?.name || '').trim()
+          if (!n || seenOpts.has(n)) return false
+          seenOpts.add(n)
+          return true
+        })
+        .map((o) => {
+          const name = (o.name || '').trim()
+          return {
+            name,
+            price: Number(o.price || 0) || 0,
+            key: `${groupName}: ${name}`
+          }
+        })
+      if (options.length > 0) {
+        groups.push({
+          group: groupName,
+          required: Boolean(g.required),
+          multiple: Boolean(g.multiple),
+          options
+        })
+      }
+    }
+    return groups
+  }
+
   const seen = new Set()
-  return arr
+  const flatOptions = arr
     .filter((v) => v && typeof v === 'object' && (v.name || '').trim() && !seen.has((v.name || '').trim()) && seen.add((v.name || '').trim()))
-    .map((v) => ({ name: (v.name || '').trim(), price: Number(v.price || 0) || 0 }))
+    .map((v) => {
+      const name = (v.name || '').trim()
+      return { name, price: Number(v.price || 0) || 0, key: name }
+    })
+  if (flatOptions.length === 0) return []
+  return [{ group: '', required: false, multiple: true, options: flatOptions }]
 }
 
-// Label varian: "Es (Gratis), Extra Shot (+Rp5.000)".
+// Daftar flat varian dari grup/flat untuk perhitungan harga & cek ada tidaknya varian.
+// -> [{ name, price }]
+export function parseVariants(raw) {
+  return parseVariantGroups(raw).flatMap((g) =>
+    g.options.map((o) => ({
+      name: o.key,
+      price: o.price
+    }))
+  )
+}
+
+// Label ringkas varian untuk kartu menu.
 export function variantsLabel(variantsRaw) {
-  return parseVariants(variantsRaw)
-    .map((v) => (v.price > 0 ? `${v.name} (+${formatRupiah(v.price)})` : `${v.name} (Gratis)`))
-    .join(', ')
+  const groups = parseVariantGroups(variantsRaw)
+  if (groups.length === 0) return ''
+  if (groups.length === 1 && !groups[0].group) {
+    return groups[0].options
+      .map((v) => (v.price > 0 ? `${v.name} (+${formatRupiah(v.price)})` : `${v.name} (Gratis)`))
+      .join(', ')
+  }
+  return groups
+    .map((g) => `${g.group}${g.required ? '*' : ''} (${g.options.map((o) => o.name).join('/')})`)
+    .join(' · ')
 }
 
 // Total biaya tambahan varian terpilih (harga dari daftar resmi menu).

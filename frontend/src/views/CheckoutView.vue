@@ -133,6 +133,11 @@ function downloadQrisImage() {
 
 async function handleSubmitOrder() {
   serverErrorMessage.value = ''
+  if (store.orderingPaused) {
+    serverErrorMessage.value = store.pauseMessage || 'Pemesanan sedang dijeda sementara.'
+    showToast(serverErrorMessage.value, 'error')
+    return
+  }
   if (!validateForm()) {
     showToast('Mohon lengkapi formulir pembayaran.', 'error')
     return
@@ -194,6 +199,15 @@ async function handleSubmitOrder() {
         <p class="checkout-page-sub font-mono">
           ISI DATA DIRI &bull; PILIH METODE BAYAR &bull; PESANAN LANGSUNG MASUK DAPUR
         </p>
+      </div>
+
+      <!-- Paused Notice -->
+      <div v-if="store.orderingPaused" class="checkout-block-card" style="background: #FFF7ED; border-color: #C2410C; margin-bottom: 1.5rem;">
+        <div class="block-body" style="color: #9A3412;">
+          <strong>PEMESANAN SEDANG DIJEDA SEMENTARA</strong>
+          <p style="margin: 0.4rem 0 0.85rem;">{{ store.pauseMessage || 'Anda tetap dapat melihat-lihat menu, namun pengiriman pesanan sedang ditutup sementara.' }}</p>
+          <button type="button" class="btn-outline" @click="router.push('/menu')">Kembali ke Menu</button>
+        </div>
       </div>
 
       <form @submit.prevent="handleSubmitOrder" class="checkout-form-grid">

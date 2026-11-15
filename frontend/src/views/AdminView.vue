@@ -6,7 +6,7 @@ import { useAdminStore } from '@/stores/adminStore'
 import AppIcon from '@/components/icons/AppIcon.vue'
 import AdminPosPanel from '@/components/AdminPosPanel.vue'
 import { api } from '@/services/api'
-import { formatRupiah, isCustomImage, createToast, parseBundleItems, bundleContentsLabel, bundleSavings, parseVariants, variantsLabel } from '@/utils/format'
+import { formatRupiah, isCustomImage, createToast, parseBundleItems, bundleContentsLabel, bundleSavings, parseVariants, parseVariantGroups, variantsLabel } from '@/utils/format'
 import { orderStatusText, waLink } from '@/utils/wa'
 import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl } from '@/utils/salesAnalytics'
 import { isBluetoothSupported, printReceiptViaBluetooth, getSavedPrinterName, forgetBluetoothPrinter } from '@/utils/bluetoothPrinter'
@@ -329,8 +329,75 @@ const isCreatingBatch = ref(false)
 
 async function fetchModeSettings() {
   await store.fetchPublicSettings()
+  pauseMsgInput.value = store.pauseMessage || ''
   const res = await api.preorder.listBatches()
   if (res.ok && Array.isArray(res.data)) batchList.value = res.data
+}
+
+const pauseSaving = ref(false)
+const pauseMsgInput = ref('')
+
+async function toggleOrderingPause() {
+  pauseSaving.value = true
+  const nextPaused = !store.orderingPaused
+  const res = await store.setOrderingPause(nextPaused, pauseMsgInput.value.trim() || null)
+  pauseSaving.value = false
+  if (!res.ok) {
+    showToast(res.error || 'Gagal mengubah status jeda pemesanan.', 'error')
+    return
+  }
+  showToast(
+    nextPaused
+      ? 'Pemesanan web dijeda (pelanggan tetap bisa melihat-lihat menu).'
+      : 'Pemesanan web dibuka kembali!'
+  )
+}
+
+const recapBatch = ref(null)
+const recapData = ref(null)
+const recapLoading = ref(false)
+
+async function openBatchRecap(batch) {
+  recapBatch.value = batch
+  recapData.value = null
+  recapLoading.value = true
+  const res = await api.preorder.getBatchRecap(batch.id)
+  recapLoading.value = false
+  if (!res.ok) {
+    showToast(res.error || 'Gagal memuat rekap pesanan batch.', 'error')
+    recapBatch.value = null
+    return
+  }
+  recapData.value = res.data
+}
+
+function closeBatchRecap() {
+  recapBatch.value = null
+  recapData.value = null
+}
+
+async function copyBatchRecapText() {
+  if (!recapData.value) return
+  const { batch, summary, items_summary: items } = recapData.value
+  const lines = [
+    `REKAP PESANAN — ${batch.name}`,
+    `Total Pesanan: ${summary.total_orders} (Lunas: ${summary.paid_orders}, Belum Lunas: ${summary.unpaid_orders})`,
+    `Total Item: ${summary.total_items_qty} | Omzet: ${formatRupiah(summary.total_revenue)}`,
+    '',
+    'RINCIAN ITEM:'
+  ]
+  for (const it of items) {
+    lines.push(`- ${it.name}: ${it.total_qty}x`)
+    for (const v of it.variants_breakdown || []) {
+      lines.push(`   • ${v.qty}x ${v.label}`)
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(lines.join('\n'))
+    showToast('Rekap pesanan disalin ke clipboard.')
+  } catch {
+    showToast('Gagal menyalin rekap.', 'error')
+  }
 }
 
 async function switchMode(mode) {
@@ -701,18 +768,123 @@ function openEditMenuModal(item) {
     is_available: item.is_available !== false,
     is_bundle: item.is_bundle === true,
     bundle_items: parseBundleItems(item.bundle_items),
-    variants: parseVariants(item.variants)
+    variants: parseVariantGroups(item.variants).map((g) => ({
+      group: g.group || 'Varian',
+      required: !!g.required,
+      multiple: !!g.multiple,
+      options: g.options.map((o) => ({ name: o.name, price: o.price }))
+    }))
   }
   showMenuModal.value = true
 }
 
-function addMenuVariant() {
+function addVariantGroup() {
   if (!Array.isArray(menuForm.value.variants)) menuForm.value.variants = []
-  menuForm.value.variants.push({ name: '', price: 0 })
+  menuForm.value.variants.push({
+    group: '',
+    required: true,
+    multiple: false,
+    options: [{ name: '', price: 0 }]
+  })
 }
 
-function removeMenuVariant(idx) {
-  menuForm.value.variants.splice(idx, 1)
+function removeVariantGroup(gIdx) {
+  menuForm.value.variants.splice(gIdx, 1)
+}
+
+function addGroupOption(gIdx) {
+  const grp = menuForm.value.variants[gIdx]
+  if (!grp) return
+  if (!Array.isArray(grp.options)) grp.options = []
+  grp.options.push({ name: '', price: 0 })
+}
+
+function removeGroupOption(gIdx, oIdx) {
+  const grp = menuForm.value.variants[gIdx]
+  if (!grp || !Array.isArray(grp.options)) return
+  grp.options.splice(oIdx, 1)
+}
+
+function mergePresetGroups(presets) {
+  if (!Array.isArray(menuForm.value.variants)) menuForm.value.variants = []
+  const existing = new Set(menuForm.value.variants.map((g) => (g.group || '').trim().toLowerCase()))
+  let added = 0
+  for (const p of presets) {
+    if (!existing.has(p.group.toLowerCase())) {
+      menuForm.value.variants.push({
+        group: p.group,
+        required: p.required,
+        multiple: p.multiple,
+        options: p.options.map((o) => ({ ...o }))
+      })
+      added++
+    }
+  }
+  if (added === 0) {
+    showToast('Semua grup preset sudah ada di menu ini.')
+  } else {
+    showToast(`${added} grup varian preset ditambahkan.`)
+  }
+}
+
+function applyCoffeePreset() {
+  mergePresetGroups([
+    {
+      group: 'Jenis Biji Kopi',
+      required: true,
+      multiple: false,
+      options: [
+        { name: 'Arabica', price: 0 },
+        { name: 'Robusta', price: 0 }
+      ]
+    },
+    {
+      group: 'Level Es',
+      required: true,
+      multiple: false,
+      options: [
+        { name: 'Normal Ice', price: 0 },
+        { name: 'Less Ice', price: 0 },
+        { name: 'Extra Ice', price: 0 },
+        { name: 'No Ice', price: 0 }
+      ]
+    },
+    {
+      group: 'Level Gula',
+      required: true,
+      multiple: false,
+      options: [
+        { name: 'Normal', price: 0 },
+        { name: 'Less', price: 0 },
+        { name: 'Extra', price: 0 }
+      ]
+    },
+    {
+      group: 'Coffee Strength',
+      required: true,
+      multiple: false,
+      options: [
+        { name: 'One Shot', price: 0 },
+        { name: 'Double Shot', price: 3000 }
+      ]
+    }
+  ])
+}
+
+function applyPandanPreset() {
+  mergePresetGroups([
+    {
+      group: 'Level Sirup Pandan',
+      required: true,
+      multiple: false,
+      options: [
+        { name: 'No Pandan', price: 0 },
+        { name: 'Less Pandan', price: 0 },
+        { name: 'Normal', price: 0 },
+        { name: 'Extra', price: 1000 }
+      ]
+    }
+  ])
 }
 
 async function saveMenuForm() {
@@ -1409,6 +1581,43 @@ async function handleResetBranding() {
             </button>
           </div>
 
+          <!-- Jeda Pemesanan Web (Browse-Only Mode) -->
+          <div class="pause-control-box" :class="{ paused: store.orderingPaused }">
+            <div class="pause-control-head">
+              <div class="pause-control-info">
+                <strong>{{ store.orderingPaused ? 'Pemesanan Web Sedang Dijeda' : 'Pemesanan Web Aktif (Bisa Checkout)' }}</strong>
+                <span>Pelanggan tetap bisa melihat menu, harga, dan varian meski pemesanan dijeda.</span>
+              </div>
+              <button
+                type="button"
+                class="btn-pause-toggle"
+                :class="{ 'is-paused': store.orderingPaused }"
+                :disabled="pauseSaving"
+                @click="toggleOrderingPause"
+              >
+                <AppIcon :name="store.orderingPaused ? 'check' : 'clock'" :size="14" />
+                <span>{{ pauseSaving ? 'Menyimpan...' : (store.orderingPaused ? 'Buka Pemesanan Lagi' : 'Jeda Pemesanan') }}</span>
+              </button>
+            </div>
+            <div class="pause-msg-row">
+              <input
+                v-model="pauseMsgInput"
+                type="text"
+                class="pause-msg-input"
+                placeholder="Pesan jeda opsional (mis. Pemesanan dibuka lagi jam 13.00 WIB)"
+              />
+              <button
+                v-if="store.orderingPaused"
+                type="button"
+                class="btn-act btn-detail"
+                :disabled="pauseSaving"
+                @click="store.setOrderingPause(true, pauseMsgInput.trim() || null); showToast('Pesan jeda diperbarui.')"
+              >
+                <span>Simpan Pesan</span>
+              </button>
+            </div>
+          </div>
+
           <p class="token-hero-hint">
             <strong>Alur Kerja:</strong> Pelanggan melihat menu tanpa login, lalu di halaman
             pembayaran memasukkan nama + nomor WhatsApp.
@@ -1965,6 +2174,10 @@ async function handleResetBranding() {
                 <span v-if="b.notes" class="batch-notes-meta"><AppIcon name="receipt" :size="13" /> Ket: <strong>{{ b.notes }}</strong></span>
               </div>
               <div class="batch-card-actions">
+                <button type="button" class="btn-act btn-detail" @click="openBatchRecap(b)" title="Lihat rekap pesanan & item pada batch ini">
+                  <AppIcon name="receipt" :size="14" />
+                  <span>Rekap</span>
+                </button>
                 <button type="button" class="btn-act btn-detail" @click="startEditBatch(b)" title="Edit nama, waktu, atau keterangan batch">
                   <AppIcon name="sparkles" :size="14" />
                   <span>Edit</span>
@@ -2945,22 +3158,56 @@ async function handleResetBranding() {
               <p class="bundle-hint">Harga paket bebas diatur sendiri (boleh lebih murah dari total isi). Isi paket tercatat otomatis di setiap pesanan.</p>
             </div>
 
-            <!-- Varian menu: pilihan + biaya tambahan opsional -->
+            <!-- Varian menu: grup & pilihan (berlaku untuk menu satuan maupun paket bundel; kosongkan jika tanpa varian) -->
             <div class="form-group">
-              <span class="form-label">Varian Menu (opsional)</span>
+              <div class="variant-header-row">
+                <span class="form-label" style="margin-bottom: 0;">Varian & Kustomisasi (Opsional)</span>
+                <div class="variant-preset-btns">
+                  <button type="button" class="btn-preset-chip" @click="applyCoffeePreset">+ Preset Kopi</button>
+                  <button type="button" class="btn-preset-chip" @click="applyPandanPreset">+ Grup Pandan</button>
+                </div>
+              </div>
               <div v-if="(menuForm.variants || []).length === 0" class="variant-empty">
-                Belum ada varian. Tambahkan bila menu ini punya pilihan — mis. "Es" gratis atau "Extra Shot" +Rp5.000.
+                Tidak ada varian. Produk tanpa varian bisa langsung ditambahkan pelanggan tanpa memilih opsi. Klik preset atau "+ Tambah Grup Varian" bila perlu.
               </div>
-              <div v-for="(v, idx) in (menuForm.variants || [])" :key="idx" class="variant-edit-row">
-                <input v-model="v.name" type="text" placeholder="Nama varian (mis. Es)" class="form-input" />
-                <input v-model.number="v.price" type="number" min="0" step="500" placeholder="Biaya (0 = gratis)" class="form-input font-mono" />
-                <button type="button" class="btn-preview-action btn-remove" @click="removeMenuVariant(idx)" title="Hapus varian">
-                  <AppIcon name="close" :size="13" />
-                </button>
+              <div v-for="(grp, gIdx) in (menuForm.variants || [])" :key="gIdx" class="variant-group-editor">
+                <div class="variant-group-head">
+                  <input
+                    v-model="grp.group"
+                    type="text"
+                    placeholder="Nama Grup (mis. Jenis Biji Kopi, Level Es)"
+                    class="form-input"
+                  />
+                  <label class="variant-flag-check" title="Pelanggan wajib memilih sebelum tambah ke keranjang">
+                    <input v-model="grp.required" type="checkbox" />
+                    <span>Wajib (*)</span>
+                  </label>
+                  <label class="variant-flag-check" title="Izinkan pilih lebih dari satu dalam grup ini">
+                    <input v-model="grp.multiple" type="checkbox" />
+                    <span>Multi</span>
+                  </label>
+                  <button type="button" class="btn-preview-action btn-remove" @click="removeVariantGroup(gIdx)" title="Hapus grup varian">
+                    <AppIcon name="close" :size="13" />
+                  </button>
+                </div>
+
+                <div class="variant-options-list">
+                  <div v-for="(opt, oIdx) in (grp.options || [])" :key="oIdx" class="variant-edit-row">
+                    <input v-model="opt.name" type="text" placeholder="Nama pilihan (mis. Arabica)" class="form-input" />
+                    <input v-model.number="opt.price" type="number" min="0" step="500" placeholder="Biaya (0 = gratis)" class="form-input font-mono" />
+                    <button type="button" class="btn-preview-action btn-remove" @click="removeGroupOption(gIdx, oIdx)" title="Hapus pilihan">
+                      <AppIcon name="close" :size="13" />
+                    </button>
+                  </div>
+                  <button type="button" class="btn-action-text" @click="addGroupOption(gIdx)">
+                    <AppIcon name="plus" :size="12" />
+                    <span>Tambah Pilihan</span>
+                  </button>
+                </div>
               </div>
-              <button type="button" class="btn-action-text" @click="addMenuVariant">
+              <button type="button" class="btn-action-text" @click="addVariantGroup">
                 <AppIcon name="plus" :size="13" />
-                <span>Tambah Varian</span>
+                <span>Tambah Grup Varian</span>
               </button>
             </div>
 
@@ -3066,6 +3313,97 @@ async function handleResetBranding() {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+
+      <!-- Modal: Rekap Pesanan per Batch -->
+      <div v-if="recapBatch" class="modal-backdrop" @click.self="closeBatchRecap">
+        <div class="modal-card recap-modal-card">
+          <div class="modal-header">
+            <h3 class="modal-title">Rekap Pesanan — {{ recapBatch.name }}</h3>
+            <button type="button" class="modal-close-btn" @click="closeBatchRecap">
+              <AppIcon name="close" :size="18" />
+            </button>
+          </div>
+          <div class="modal-body">
+            <div v-if="recapLoading" class="recap-loading">Memuat rekap pesanan batch...</div>
+            <template v-else-if="recapData">
+              <div class="recap-kpi-grid">
+                <div class="recap-kpi-box">
+                  <span class="recap-kpi-label">Pesanan Aktif</span>
+                  <strong class="recap-kpi-val">{{ recapData.summary.total_orders }}</strong>
+                  <span v-if="recapData.summary.cancelled_orders > 0" class="recap-kpi-sub">
+                    ({{ recapData.summary.cancelled_orders }} batal)
+                  </span>
+                </div>
+                <div class="recap-kpi-box">
+                  <span class="recap-kpi-label">Lunas / Belum</span>
+                  <strong class="recap-kpi-val">{{ recapData.summary.paid_orders }} / {{ recapData.summary.unpaid_orders }}</strong>
+                </div>
+                <div class="recap-kpi-box">
+                  <span class="recap-kpi-label">Total Item</span>
+                  <strong class="recap-kpi-val">{{ recapData.summary.total_items_qty }} pcs</strong>
+                </div>
+                <div class="recap-kpi-box">
+                  <span class="recap-kpi-label">Total Omzet</span>
+                  <strong class="recap-kpi-val font-mono">{{ formatRupiah(recapData.summary.total_revenue) }}</strong>
+                </div>
+              </div>
+
+              <div class="recap-section">
+                <div class="recap-section-head">
+                  <h4>Rincian Produksi Dapur / Barista</h4>
+                  <button type="button" class="btn-act btn-detail" @click="copyBatchRecapText">
+                    <AppIcon name="receipt" :size="13" />
+                    <span>Salin Teks Rekap</span>
+                  </button>
+                </div>
+                <div v-if="recapData.items_summary.length === 0" class="variant-empty">
+                  Belum ada pesanan aktif di batch ini.
+                </div>
+                <div v-else class="recap-items-list">
+                  <div v-for="it in recapData.items_summary" :key="it.name" class="recap-item-card">
+                    <div class="recap-item-head">
+                      <strong>{{ it.name }}</strong>
+                      <span class="recap-qty-badge">{{ it.total_qty }}x</span>
+                    </div>
+                    <ul class="recap-variants-list">
+                      <li v-for="(v, vIdx) in it.variants_breakdown" :key="vIdx">
+                        <span class="font-mono"><strong>{{ v.qty }}x</strong></span> — {{ v.label }}
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div class="recap-section">
+                <h4>Daftar Pemesan ({{ recapData.orders.length }})</h4>
+                <div v-if="recapData.orders.length === 0" class="variant-empty">
+                  Belum ada pemesan pada batch ini.
+                </div>
+                <div v-else class="recap-orders-list">
+                  <div v-for="ord in recapData.orders" :key="ord.orderId" class="recap-order-row">
+                    <div class="recap-order-main">
+                      <strong>{{ ord.customerName }}</strong>
+                      <span class="font-mono">{{ ord.orderId }}</span>
+                      <span class="recap-status-pill" :class="{ paid: ord.isPaid }">
+                        {{ ord.isPaid ? 'Lunas' : 'Belum Lunas' }} · {{ ord.orderStatus }}
+                      </span>
+                    </div>
+                    <div class="recap-order-items">
+                      <span v-for="(oit, oi) in ord.items" :key="oi">
+                        {{ oit.quantity }}x {{ oit.name }}<template v-if="oit.notes"> ({{ oit.notes }})</template>{{ oi < ord.items.length - 1 ? '; ' : '' }}
+                      </span>
+                    </div>
+                    <div class="recap-order-total font-mono">{{ formatRupiah(ord.total) }}</div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-cancel" @click="closeBatchRecap">Tutup</button>
+          </div>
         </div>
       </div>
 
@@ -7007,5 +7345,277 @@ async function handleResetBranding() {
 
 .data-table td {
   border-bottom: 1px solid var(--border-medium) !important;
+}
+
+/* Pause Ordering Control */
+.pause-control-box {
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-medium);
+  background: #FAF8F5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.pause-control-box.paused {
+  border-color: #EA580C;
+  background: #FFF7ED;
+}
+
+.pause-control-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.pause-control-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+
+.pause-control-info span {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.btn-pause-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1.5px solid #C2410C;
+  background: #FFFFFF;
+  color: #C2410C;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.btn-pause-toggle.is-paused {
+  background: #15803D;
+  border-color: #15803D;
+  color: #FFFFFF;
+}
+
+.pause-msg-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.pause-msg-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  background: #FFFFFF;
+}
+
+/* Grouped Variant Editor */
+.variant-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.variant-preset-btns {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.btn-preset-chip {
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 999px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary-soft, #EEF2F0);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.variant-group-editor {
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  padding: 0.65rem;
+  margin-bottom: 0.6rem;
+  background: #FAF9F6;
+}
+
+.variant-group-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.variant-group-head .form-input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.variant-flag-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.variant-options-list {
+  padding-left: 0.65rem;
+  border-left: 2px solid var(--border-medium);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* Batch Recap Modal */
+.recap-modal-card {
+  max-width: 720px !important;
+  width: 95%;
+}
+
+.recap-loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.recap-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 1.15rem;
+}
+
+.recap-kpi-box {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background: #FAF8F5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recap-kpi-label {
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+}
+
+.recap-kpi-val {
+  font-size: 1.05rem;
+  color: var(--color-primary);
+}
+
+.recap-kpi-sub {
+  font-size: 0.72rem;
+  color: #B91C1C;
+}
+
+.recap-section {
+  margin-top: 1rem;
+}
+
+.recap-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.recap-section h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.92rem;
+}
+
+.recap-items-list,
+.recap-orders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.recap-item-card,
+.recap-order-row {
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  background: #FFFFFF;
+}
+
+.recap-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+
+.recap-qty-badge {
+  background: var(--color-primary);
+  color: #FFFFFF;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.recap-variants-list {
+  margin: 0;
+  padding-left: 1rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.recap-order-main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.recap-status-pill {
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #FEF3C7;
+  color: #92400E;
+  font-weight: 700;
+}
+
+.recap-status-pill.paid {
+  background: #DCFCE7;
+  color: #166534;
+}
+
+.recap-order-items {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+.recap-order-total {
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-top: 0.2rem;
 }
 </style>

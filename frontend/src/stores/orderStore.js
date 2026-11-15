@@ -77,10 +77,25 @@ function serializeBundleItems(raw) {
   return lines.length > 0 ? JSON.stringify(lines) : null
 }
 
-// Varian menu ke JSON string backend ('[{"name": "Es", "price": 0}]').
+// Varian menu ke JSON string backend (mendukung format grup & format flat lama).
 function serializeVariants(raw) {
   if (typeof raw === 'string') return raw.trim() || null
-  if (!Array.isArray(raw)) return null
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const isGrouped = raw.some((r) => r && typeof r === 'object' && ('group' in r || 'options' in r))
+  if (isGrouped) {
+    const groups = raw
+      .filter((g) => g && (g.group || '').trim())
+      .map((g) => ({
+        group: (g.group || '').trim(),
+        required: Boolean(g.required),
+        multiple: Boolean(g.multiple),
+        options: (Array.isArray(g.options) ? g.options : [])
+          .filter((o) => o && (o.name || '').trim())
+          .map((o) => ({ name: (o.name || '').trim(), price: Number(o.price || 0) || 0 }))
+      }))
+      .filter((g) => g.options.length > 0)
+    return groups.length > 0 ? JSON.stringify(groups) : null
+  }
   const rows = raw
     .filter((v) => v && (v.name || '').trim())
     .map((v) => ({ name: (v.name || '').trim(), price: Number(v.price || 0) || 0 }))
@@ -432,6 +447,8 @@ export const useOrderStore = defineStore('order', () => {
   // Customer tidak memilih mode — channel pesanan selalu mengikuti ini.
   const activeMode = ref('pos')
   const activeBatch = ref(null)
+  const orderingPaused = ref(false)
+  const pauseMessage = ref('')
 
   const isPreorder = computed(() => activeMode.value === 'preorder')
   const isPreorderOpen = computed(() => isPreorder.value && !!activeBatch.value)
@@ -491,7 +508,7 @@ export const useOrderStore = defineStore('order', () => {
             }
           }
         }
-        if (type === 'MODE_UPDATED') {
+        if (type === 'MODE_UPDATED' || type === 'PAUSE_UPDATED') {
           fetchPublicSettings()
         }
         if (type === 'ORDER_STATUS_UPDATED' && payload?.orderId) {
@@ -562,6 +579,8 @@ export const useOrderStore = defineStore('order', () => {
       else activeMode.value = 'pos'
     }
     activeBatch.value = d.batch || null
+    orderingPaused.value = !!d.paused
+    pauseMessage.value = d.pause_message || ''
     return res
   }
 
@@ -570,7 +589,19 @@ export const useOrderStore = defineStore('order', () => {
     if (res.ok && res.data?.mode) {
       activeMode.value = res.data.mode
       activeBatch.value = res.data.batch || null
+      orderingPaused.value = !!res.data.paused
+      pauseMessage.value = res.data.pause_message || ''
       broadcastChange('MODE_UPDATED', { mode: activeMode.value })
+    }
+    return res
+  }
+
+  async function setOrderingPause(paused, message = null) {
+    const res = await api.preorder.setPause(paused, message)
+    if (res.ok && res.data) {
+      orderingPaused.value = !!res.data.paused
+      pauseMessage.value = res.data.pause_message || ''
+      broadcastChange('PAUSE_UPDATED', { paused: orderingPaused.value })
     }
     return res
   }
@@ -735,8 +766,11 @@ export const useOrderStore = defineStore('order', () => {
     isPreorder,
     activeBatch,
     isPreorderOpen,
+    orderingPaused,
+    pauseMessage,
     fetchPublicSettings,
     switchMode,
+    setOrderingPause,
     waConnected,
     waReachable,
     waQr,

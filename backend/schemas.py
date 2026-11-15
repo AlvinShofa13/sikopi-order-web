@@ -147,6 +147,11 @@ class ModeSwitchRequest(BaseModel):
     mode: str  # 'pos' (on-site) | 'preorder' (open PO); keduanya tidak bisa aktif bersamaan
 
 
+class PauseOrderingRequest(BaseModel):
+    paused: bool
+    message: Optional[str] = None
+
+
 class PreorderBatchCreate(BaseModel):
     name: str
     order_deadline: Optional[datetime] = None

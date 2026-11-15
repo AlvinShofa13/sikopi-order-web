@@ -47,11 +47,30 @@ def _normalize_bundle(is_bundle, bundle_items, db: Session, self_id=None):
     return json.dumps(normalized)
 
 
-def _normalize_variants(variants) -> str | None:
-    """Validasi & normalisasi varian menu.
+def _normalize_option(opt: dict, seen_names: set, context: str = "") -> dict:
+    if not isinstance(opt, dict):
+        raise HTTPException(status_code=422, detail=f"Opsi varian {context}tidak valid.")
+    name = (opt.get("name") or "").strip()
+    try:
+        price = float(opt.get("price") or 0.0)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail=f"Biaya varian '{name}' tidak valid.")
+    if not name:
+        raise HTTPException(status_code=422, detail=f"Nama opsi varian {context}wajib diisi.")
+    if price < 0:
+        raise HTTPException(status_code=422, detail=f"Biaya varian '{name}' tidak boleh negatif.")
+    if name in seen_names:
+        raise HTTPException(status_code=422, detail=f"Varian '{name}' {context}duplikat.")
+    seen_names.add(name)
+    return {"name": name, "price": price}
 
-    Mengembalikan JSON string '[{"name": ..., "price": ...}]' atau None
-    (tanpa varian). Melempar 422 bila tidak valid.
+
+def _normalize_variants(variants) -> str | None:
+    """Validasi & normalisasi varian menu (mendukung format flat & grup).
+
+    - Format grup: [{"group": "Jenis Biji Kopi", "required": true, "multiple": false, "options": [{"name": "Arabica", "price": 0}]}]
+    - Format flat (lama): [{"name": "Es", "price": 0}]
+    Mengembalikan JSON string atau None (bila produk tidak memiliki varian).
     """
     if not variants or (isinstance(variants, str) and not variants.strip()):
         return None
@@ -61,22 +80,40 @@ def _normalize_variants(variants) -> str | None:
         raise HTTPException(status_code=422, detail="Varian menu tidak valid (bukan JSON).")
     if not isinstance(rows, list):
         raise HTTPException(status_code=422, detail="Varian menu tidak valid.")
-    normalized = []
-    for row in rows:
-        if not isinstance(row, dict):
-            raise HTTPException(status_code=422, detail="Varian menu tidak valid.")
-        name = (row.get("name") or "").strip()
-        try:
-            price = float(row.get("price") or 0.0)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=422, detail=f"Biaya varian '{name}' tidak valid.")
-        if not name:
-            raise HTTPException(status_code=422, detail="Nama varian wajib diisi.")
-        if price < 0:
-            raise HTTPException(status_code=422, detail=f"Biaya varian '{name}' tidak boleh negatif.")
-        if any(v["name"] == name for v in normalized):
-            raise HTTPException(status_code=422, detail=f"Varian '{name}' duplikat.")
-        normalized.append({"name": name, "price": price})
+    if not rows:
+        return None
+
+    is_grouped = any(isinstance(r, dict) and ("group" in r or "options" in r) for r in rows)
+    if is_grouped:
+        normalized_groups = []
+        seen_groups = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise HTTPException(status_code=422, detail="Grup varian menu tidak valid.")
+            group_name = (row.get("group") or "").strip()
+            if not group_name:
+                raise HTTPException(status_code=422, detail="Nama grup varian wajib diisi.")
+            if group_name in seen_groups:
+                raise HTTPException(status_code=422, detail=f"Grup varian '{group_name}' duplikat.")
+            seen_groups.add(group_name)
+            raw_options = row.get("options")
+            if not isinstance(raw_options, list) or len(raw_options) == 0:
+                raise HTTPException(status_code=422, detail=f"Grup varian '{group_name}' wajib memiliki minimal 1 pilihan.")
+            seen_opts = set()
+            options = [
+                _normalize_option(opt, seen_opts, f"pada grup '{group_name}' ")
+                for opt in raw_options
+            ]
+            normalized_groups.append({
+                "group": group_name,
+                "required": bool(row.get("required", False)),
+                "multiple": bool(row.get("multiple", False)),
+                "options": options,
+            })
+        return json.dumps(normalized_groups) if normalized_groups else None
+
+    seen_flat = set()
+    normalized = [_normalize_option(row, seen_flat) for row in rows]
     return json.dumps(normalized) if normalized else None
 
 

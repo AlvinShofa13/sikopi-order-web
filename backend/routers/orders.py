@@ -14,7 +14,15 @@ from auth_dep import client_ip, is_valid_admin_token, prune_fails, record_fail, 
 from database import get_db
 from models import AppSetting, MenuItem, Order, OrderItem, PreorderBatch
 from realtime import order_manager
-from routers.preorder import MODE_POS, MODE_PREORDER, _utc_iso, active_batch, get_active_mode
+from routers.preorder import (
+    MODE_POS,
+    MODE_PREORDER,
+    _utc_iso,
+    active_batch,
+    get_active_mode,
+    get_pause_message,
+    is_ordering_paused,
+)
 from routers.uploads import ORDER_CODE_RE
 from schemas import OrderCreate, OrderStatusUpdate, PosOrderCreate
 from wa_client import send_wa_text
@@ -418,13 +426,69 @@ def _parse_menu_variants(menu_item) -> list:
     return rows if isinstance(rows, list) else []
 
 
-def _resolve_variant_extras(menu_item, wanted) -> tuple:
+def _resolve_variant_extras(menu_item, wanted, *, require_variants: bool = True) -> tuple:
     """Cocokkan varian pilihan dengan daftar resmi menu (harga dari server).
 
-    Mengembalikan (names, extra_per_porsi). Melempar 422 bila ada varian tak dikenal.
+    Mendukung format grup ([{"group": ..., "required": bool, "multiple": bool, "options": [{"name": ..., "price": ...}]}])
+    maupun format flat lama ([{"name": ..., "price": ...}]).
+    Mengembalikan (names, extra_per_porsi). Melempar 422 bila ada varian tak dikenal atau grup wajib kosong.
     """
     official = _parse_menu_variants(menu_item)
     names = [str(v).strip() for v in (wanted or []) if str(v).strip()]
+    is_grouped = any(isinstance(r, dict) and ("group" in r or "options" in r) for r in official)
+
+    if is_grouped:
+        by_key = {}
+        group_meta = {}
+        for grp in official:
+            if not isinstance(grp, dict):
+                continue
+            gname = (grp.get("group") or "").strip()
+            if not gname:
+                continue
+            group_meta[gname] = {
+                "required": bool(grp.get("required", False)),
+                "multiple": bool(grp.get("multiple", False)),
+            }
+            for opt in (grp.get("options") or []):
+                if not isinstance(opt, dict):
+                    continue
+                oname = (opt.get("name") or "").strip()
+                if not oname:
+                    continue
+                price = float(opt.get("price") or 0.0)
+                key = f"{gname}: {oname}"
+                by_key[key] = (gname, price)
+
+        resolved = []
+        extra = 0.0
+        selected_per_group: dict[str, list[str]] = {}
+        for raw_name in names:
+            if raw_name not in by_key:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Varian '{raw_name}' tidak dikenal pada menu '{menu_item.name}'.",
+                )
+            gname, price = by_key[raw_name]
+            if raw_name not in resolved:
+                resolved.append(raw_name)
+                extra += price
+                selected_per_group.setdefault(gname, []).append(raw_name)
+
+        for gname, meta in group_meta.items():
+            picked = selected_per_group.get(gname, [])
+            if require_variants and meta["required"] and len(picked) == 0:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Pilihan '{gname}' wajib dipilih pada menu '{menu_item.name}'.",
+                )
+            if not meta["multiple"] and len(picked) > 1:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Pilihan '{gname}' pada menu '{menu_item.name}' hanya boleh memilih 1 opsi.",
+                )
+        return resolved, extra
+
     if not names:
         return [], 0.0
     if not official:
@@ -455,7 +519,7 @@ def _rp(amount: float) -> str:
     return "Rp" + f"{float(amount or 0.0):,.0f}".replace(",", ".")
 
 
-def _price_with_breakdown(db: Session, items) -> tuple:
+def _price_with_breakdown(db: Session, items, *, require_variants: bool = True) -> tuple:
     """Hitung ulang harga dari `menu_items` (abaikan price client).
 
     Mengembalikan (items_data, subtotal, total). Melempar 422 bila ada menu tak dikenal.
@@ -475,7 +539,7 @@ def _price_with_breakdown(db: Session, items) -> tuple:
         # paket walau paket diubah/dihapus kemudian).
         bundle_label = _bundle_contents_label(db, menu_item)
         # Varian: harga ekstra selalu dari server (abaikan harga client).
-        variant_names, variant_extra = _resolve_variant_extras(menu_item, it.variants)
+        variant_names, variant_extra = _resolve_variant_extras(menu_item, it.variants, require_variants=require_variants)
         if variant_extra:
             line_total += variant_extra * int(it.quantity)
             subtotal += variant_extra * int(it.quantity)
@@ -587,6 +651,12 @@ async def create_order(
     - Kode transaksi dari client dipakai agar nama file bukti sudah terikat ke
       pesanan sejak awal; divalidasi format + keunikan.
     """
+    if is_ordering_paused(db):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=get_pause_message(db),
+        )
+
     if not payload.items:
         raise HTTPException(status_code=422, detail="Keranjang pesanan kosong.")
 
@@ -616,7 +686,7 @@ async def create_order(
         raise HTTPException(status_code=422, detail="Bukti pembayaran tidak valid.")
 
     # 3. Harga dari database (abaikan price & breakdown dari client)
-    items_data, subtotal, total = _price_with_breakdown(db, payload.items)
+    items_data, subtotal, total = _price_with_breakdown(db, payload.items, require_variants=True)
 
     # 4. Identitas & kontak pelanggan
     customer_name = (payload.customer.name or "").strip() or "Pelanggan"
@@ -677,7 +747,7 @@ async def create_pos_order(
     method = (payload.paymentMethod or "cash").strip().lower()
     method = "qris" if method == "qris" else "cash"
 
-    items_data, subtotal, total = _price_with_breakdown(db, payload.items)
+    items_data, subtotal, total = _price_with_breakdown(db, payload.items, require_variants=False)
 
     customer_name = ((payload.customer.name if payload.customer else "") or "").strip() or "Pelanggan"
     phone = normalize_phone(payload.customer.phone if payload.customer else "")

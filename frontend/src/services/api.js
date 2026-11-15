@@ -206,6 +206,15 @@ export const api = {
       return request(`/preorder/batches/${batchId}/reopen`, {
         method: 'PATCH'
       })
+    },
+    async setPause(paused, message = null) {
+      return request('/preorder/pause', {
+        method: 'PUT',
+        body: JSON.stringify({ paused: !!paused, message })
+      })
+    },
+    async getBatchRecap(batchId) {
+      return request(`/preorder/batches/${batchId}/recap`)
     }
   },
 

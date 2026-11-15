@@ -27,8 +27,22 @@ function formatDateTime(iso) {
 <template>
   <div class="ordering-banner-area">
     <div class="container">
+      <!-- Paused / Browse-Only State -->
+      <div v-if="store.orderingPaused" class="craft-mode-pill mode-paused">
+        <div class="pill-indicator">
+          <AppIcon name="clock" :size="16" />
+        </div>
+        <div class="pill-details">
+          <span class="mode-sticker">PEMESANAN DIJEDA</span>
+          <span class="batch-name">Mode Lihat-Lihat</span>
+          <span class="time-meta">
+            · {{ store.pauseMessage || 'Pemesanan sedang dijeda sementara. Anda masih dapat melihat-lihat menu.' }}
+          </span>
+        </div>
+      </div>
+
       <!-- Open PO Active State -->
-      <div v-if="isPreorder && batch" class="craft-mode-pill mode-preorder">
+      <div v-else-if="isPreorder && batch" class="craft-mode-pill mode-preorder">
         <div class="pill-indicator">
           <AppIcon name="clock" :size="16" />
         </div>
@@ -107,6 +121,15 @@ function formatDateTime(iso) {
 .mode-waiting {
   background-color: var(--color-sand);
   color: var(--color-text-muted);
+}
+
+.mode-paused {
+  background-color: #FFF7ED;
+  color: #9A3412;
+}
+
+.mode-paused .mode-sticker {
+  background-color: #C2410C;
 }
 
 .pill-indicator {

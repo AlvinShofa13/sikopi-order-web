@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, createToast, bundleContentsLabel, bundleSavings, parseVariants, variantExtras, variantsLabel } from '@/utils/format'
+import { formatRupiah, createToast, bundleContentsLabel, bundleSavings, parseVariants, parseVariantGroups, variantExtras, variantsLabel } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -14,6 +14,7 @@ const selectedCategory = ref('Semua')
 const activeItemForNote = ref(null)
 const itemNoteInput = ref('')
 const itemVariantsInput = ref([])
+const variantError = ref('')
 const { toastMessage, showToast } = createToast(2600)
 
 function formatDateTime(iso) {
@@ -62,22 +63,42 @@ function bundleSaveInfo(item) {
   return bundleSavings(item.bundle_items, store.menuItems, item.price)
 }
 
+const activeVariantGroups = computed(() =>
+  activeItemForNote.value ? parseVariantGroups(activeItemForNote.value.variants) : []
+)
+
 function openNoteModal(item) {
   if (item.is_available === false) return
+  if (store.orderingPaused) {
+    showToast(store.pauseMessage || 'Pemesanan sedang dijeda sementara.')
+    return
+  }
   activeItemForNote.value = item
   itemNoteInput.value = ''
   itemVariantsInput.value = []
+  variantError.value = ''
 }
 
 function closeNoteModal() {
   activeItemForNote.value = null
   itemNoteInput.value = ''
   itemVariantsInput.value = []
+  variantError.value = ''
 }
 
-function toggleModalVariant(name) {
-  const idx = itemVariantsInput.value.indexOf(name)
-  if (idx === -1) itemVariantsInput.value.push(name)
+function selectGroupOption(group, optKey) {
+  variantError.value = ''
+  if (!group.multiple) {
+    const groupKeys = new Set(group.options.map((o) => o.key))
+    const already = itemVariantsInput.value.includes(optKey)
+    itemVariantsInput.value = itemVariantsInput.value.filter((k) => !groupKeys.has(k))
+    if (!already || group.required) {
+      itemVariantsInput.value.push(optKey)
+    }
+    return
+  }
+  const idx = itemVariantsInput.value.indexOf(optKey)
+  if (idx === -1) itemVariantsInput.value.push(optKey)
   else itemVariantsInput.value.splice(idx, 1)
 }
 
@@ -88,6 +109,18 @@ function modalVariantExtra() {
 
 function confirmAddWithNote() {
   if (!activeItemForNote.value || activeItemForNote.value.is_available === false) return
+  if (store.orderingPaused) {
+    showToast(store.pauseMessage || 'Pemesanan sedang dijeda sementara.')
+    return
+  }
+  const missing = activeVariantGroups.value
+    .filter((g) => g.required)
+    .filter((g) => !g.options.some((o) => itemVariantsInput.value.includes(o.key)))
+    .map((g) => g.group || 'Varian')
+  if (missing.length > 0) {
+    variantError.value = `Mohon pilih varian wajib terlebih dahulu: ${missing.join(', ')}`
+    return
+  }
   store.addToCart(activeItemForNote.value, itemNoteInput.value, itemVariantsInput.value)
   showToast(`${activeItemForNote.value.name} ditambahkan ke pesanan`)
   closeNoteModal()
@@ -95,7 +128,11 @@ function confirmAddWithNote() {
 
 function quickAddToCart(item) {
   if (item.is_available === false) return
-  // Menu bervarian wajib lewat modal kustomisasi agar varian bisa dipilih.
+  if (store.orderingPaused) {
+    showToast(store.pauseMessage || 'Pemesanan sedang dijeda sementara.')
+    return
+  }
+  // Menu atau paket bundel bervarian wajib lewat modal kustomisasi agar varian bisa dipilih.
   if (parseVariants(item.variants).length > 0) {
     openNoteModal(item)
     return
@@ -117,8 +154,17 @@ function goToCart() {
 <div class="header-titles">
           <h1 class="page-title">Pilihan Menu Kopi & Sandwich</h1>
 
+          <!-- Pemesanan sedang dijeda (browse-only) -->
+          <div v-if="store.orderingPaused" class="pause-notice-banner">
+            <AppIcon name="clock" :size="16" />
+            <span>
+              <strong>Pemesanan Sedang Dijeda:</strong>
+              {{ store.pauseMessage || 'Anda tetap dapat melihat-lihat seluruh menu dan harga. Pemesanan akan dibuka kembali segera.' }}
+            </span>
+          </div>
+
           <!-- Mode Open PO sedang dibuka -->
-          <div v-if="store.activeMode === 'preorder' && store.activeBatch" class="customer-welcome-pill">
+          <div v-else-if="store.activeMode === 'preorder' && store.activeBatch" class="customer-welcome-pill">
             <AppIcon name="clock" :size="15" />
             <span>
               <strong>Open PO {{ store.activeBatch.name }}</strong> sedang dibuka
@@ -232,7 +278,16 @@ function goToCart() {
                 </div>
 
                 <div class="action-buttons">
-                  <template v-if="item.is_available !== false">
+                  <template v-if="store.orderingPaused">
+                    <button
+                      class="btn-out-of-stock"
+                      disabled
+                      title="Pemesanan sedang dijeda sementara"
+                    >
+                      <span>Pemesanan Dijeda</span>
+                    </button>
+                  </template>
+                  <template v-else-if="item.is_available !== false">
                     <button 
                       class="btn-customize" 
                       title="Tambah dengan catatan khusus"
@@ -267,7 +322,7 @@ function goToCart() {
 
     <!-- Sticky Floating Order Banner when items in cart -->
     <transition name="slide-up">
-      <div v-if="store.cartCount > 0" class="floating-cart-banner">
+      <div v-if="store.cartCount > 0 && !store.orderingPaused" class="floating-cart-banner">
         <div class="container banner-inner">
           <div class="banner-info">
             <span class="banner-count">{{ store.cartCount }} menu dipilih</span>
@@ -299,24 +354,38 @@ function goToCart() {
               <p class="modal-item-price">{{ formatRupiah(activeItemForNote.price) }}</p>
             </div>
 
-            <div v-if="parseVariants(activeItemForNote.variants).length > 0" class="form-group">
-              <label class="form-label">Varian (boleh pilih lebih dari satu)</label>
-              <div class="variant-pick-list">
-                <button
-                  v-for="v in parseVariants(activeItemForNote.variants)"
-                  :key="v.name"
-                  type="button"
-                  class="variant-chip"
-                  :class="{ active: itemVariantsInput.includes(v.name) }"
-                  @click="toggleModalVariant(v.name)"
-                >
-                  <span class="variant-check">{{ itemVariantsInput.includes(v.name) ? '✓' : '' }}</span>
-                  <span>{{ v.name }}</span>
-                  <span class="variant-price">{{ v.price > 0 ? `+${formatRupiah(v.price)}` : 'Gratis' }}</span>
-                </button>
+            <div v-if="activeVariantGroups.length > 0" class="variant-groups-wrap">
+              <div v-for="(grp, gIdx) in activeVariantGroups" :key="grp.group || gIdx" class="form-group variant-group-box">
+                <label class="form-label">
+                  <span>{{ grp.group || 'Varian' }}</span>
+                  <span v-if="grp.required" class="variant-req-star">*</span>
+                  <span class="variant-mode-hint">
+                    {{ grp.multiple ? '(Boleh pilih lebih dari satu)' : '(Pilih salah satu)' }}
+                  </span>
+                </label>
+                <div class="variant-pick-list">
+                  <button
+                    v-for="opt in grp.options"
+                    :key="opt.key"
+                    type="button"
+                    class="variant-chip"
+                    :class="{
+                      active: itemVariantsInput.includes(opt.key),
+                      'is-radio': !grp.multiple
+                    }"
+                    @click="selectGroupOption(grp, opt.key)"
+                  >
+                    <span class="variant-check" :class="{ 'radio-dot': !grp.multiple }">
+                      {{ itemVariantsInput.includes(opt.key) ? (grp.multiple ? '✓' : '●') : '' }}
+                    </span>
+                    <span>{{ opt.name }}</span>
+                    <span class="variant-price">{{ opt.price > 0 ? `+${formatRupiah(opt.price)}` : 'Gratis' }}</span>
+                  </button>
+                </div>
               </div>
+              <p v-if="variantError" class="variant-error-msg">{{ variantError }}</p>
               <p v-if="modalVariantExtra() > 0" class="form-hint">
-                Tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
+                Total tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
               </p>
             </div>
 
@@ -1249,6 +1318,58 @@ function goToCart() {
   .banner-inner {
     margin: 0 1rem;
   }
+}
+
+.pause-notice-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 1rem;
+  padding: 10px 16px;
+  background-color: #FFF7ED;
+  color: #9A3412;
+  border: 1px solid #FDBA74;
+  border-radius: var(--radius-md);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.variant-groups-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.variant-group-box {
+  margin-bottom: 0 !important;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px dashed var(--border-light);
+}
+
+.variant-req-star {
+  color: #DC2626;
+  font-weight: 800;
+  margin-left: 3px;
+}
+
+.variant-mode-hint {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-left: 6px;
+}
+
+.variant-check.radio-dot {
+  border-radius: 999px;
+  font-size: 0.65rem;
+}
+
+.variant-error-msg {
+  color: #DC2626;
+  font-size: 0.84rem;
+  font-weight: 600;
+  margin: 0.25rem 0 0;
 }
 </style>
 
