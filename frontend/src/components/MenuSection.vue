@@ -72,7 +72,7 @@ const favoriteItems = computed(() => {
       if (soldDiff !== 0) return soldDiff
       return (a.name || '').localeCompare(b.name || '')
     })
-    .slice(0, 10)
+    .slice(0, 3)
 })
 
 // Carousel otomatis untuk poster kiri "MENU KAMI"
@@ -324,9 +324,9 @@ function getItemType(item) {
                 <button 
                   type="button" 
                   class="fav-add-btn" 
-                  :disabled="fav.is_available === false"
+                  :disabled="fav.is_available === false || store.orderingPaused"
                   @click.stop="handleAdd(fav)"
-                  title="Tambah ke Pesanan"
+                  :title="store.orderingPaused ? 'Pemesanan sedang dijeda' : 'Tambah ke Pesanan'"
                 >
                   +
                 </button>
