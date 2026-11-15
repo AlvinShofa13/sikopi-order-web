@@ -14,7 +14,7 @@ from auth_dep import client_ip, is_valid_admin_token, prune_fails, record_fail, 
 from database import get_db
 from models import AppSetting, MenuItem, Order, OrderItem, PreorderBatch
 from realtime import order_manager
-from routers.preorder import MODE_POS, MODE_PREORDER, active_batch, get_active_mode
+from routers.preorder import MODE_POS, MODE_PREORDER, _utc_iso, active_batch, get_active_mode
 from routers.uploads import ORDER_CODE_RE
 from schemas import OrderCreate, OrderStatusUpdate, PosOrderCreate
 from wa_client import send_wa_text
@@ -126,10 +126,15 @@ async def websocket_orders_endpoint(
 def serialize_order(ord: Order) -> Dict[str, Any]:
     return {
         "orderId": ord.order_id,
-        "createdAt": ord.created_at.isoformat() if ord.created_at else "",
+        "createdAt": _utc_iso(ord.created_at) or "",
         "channel": ord.channel or CHANNEL_POS,
         "batch": (
-            {"id": ord.batch.id, "name": ord.batch.name, "pickupDate": ord.batch.pickup_date.isoformat() if ord.batch.pickup_date else None}
+            {
+                "id": ord.batch.id,
+                "name": ord.batch.name,
+                "pickupDate": _utc_iso(ord.batch.pickup_date),
+                "notes": ord.batch.notes or "",
+            }
             if ord.batch else None
         ),
         "customer": {
@@ -191,7 +196,7 @@ def _export_rows(db: Session):
     for ord in orders:
         base = [
             ord.order_id,
-            ord.created_at.isoformat() if ord.created_at else "",
+            _utc_iso(ord.created_at) or "",
             "Open PO" if ord.channel == CHANNEL_PREORDER else "On-site",
             ord.batch.name if ord.batch else "-",
             ord.customer_name,
