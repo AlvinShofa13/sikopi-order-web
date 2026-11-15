@@ -1371,5 +1371,34 @@ function goToCart() {
   font-weight: 600;
   margin: 0.25rem 0 0;
 }
+
+@media (max-width: 640px) {
+  .variant-groups-wrap {
+    gap: 1.15rem;
+  }
+
+  .variant-group-box {
+    padding-bottom: 1rem;
+  }
+
+  .variant-pick-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+
+  .variant-chip {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    padding: 8px 9px;
+    font-size: 0.78rem;
+  }
+
+  .variant-price {
+    margin-left: auto;
+    white-space: nowrap;
+  }
+}
 </style>
 

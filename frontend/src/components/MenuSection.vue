@@ -1745,4 +1745,40 @@ function getItemType(item) {
   text-transform: uppercase;
   cursor: pointer;
 }
+
+@media (max-width: 640px) {
+  .variant-modal-card {
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .variant-groups-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 1.15rem;
+  }
+
+  .variant-modal-group {
+    gap: 0.55rem;
+  }
+
+  .variant-pick-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+
+  .variant-chip {
+    width: 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    padding: 8px 9px;
+    font-size: 0.76rem;
+  }
+
+  .variant-price {
+    margin-left: auto;
+    white-space: nowrap;
+  }
+}
 </style>
