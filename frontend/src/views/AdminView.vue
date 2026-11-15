@@ -3318,14 +3318,17 @@ async function handleResetBranding() {
 
       <!-- Modal: Rekap Pesanan per Batch -->
       <div v-if="recapBatch" class="modal-backdrop" @click.self="closeBatchRecap">
-        <div class="modal-card recap-modal-card">
-          <div class="modal-header">
-            <h3 class="modal-title">Rekap Pesanan — {{ recapBatch.name }}</h3>
-            <button type="button" class="modal-close-btn" @click="closeBatchRecap">
+        <div class="menu-form-card recap-modal-card">
+          <div class="detail-header">
+            <div>
+              <span class="detail-badge">REKAP BATCH</span>
+              <h3 class="detail-title">{{ recapBatch.name }}</h3>
+            </div>
+            <button type="button" class="btn-detail-close" @click="closeBatchRecap">
               <AppIcon name="close" :size="18" />
             </button>
           </div>
-          <div class="modal-body">
+          <div class="recap-body">
             <div v-if="recapLoading" class="recap-loading">Memuat rekap pesanan batch...</div>
             <template v-else-if="recapData">
               <div class="recap-kpi-grid">
@@ -7487,7 +7490,12 @@ async function handleResetBranding() {
 /* Batch Recap Modal */
 .recap-modal-card {
   max-width: 720px !important;
-  width: 95%;
+}
+
+.recap-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
 }
 
 .recap-loading {

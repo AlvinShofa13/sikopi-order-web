@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, parseVariants, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
+import { formatRupiah, parseVariants, parseVariantGroups, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
 
 const router = useRouter()
 const store = useOrderStore()
@@ -14,6 +14,7 @@ const selectedItemForCaption = ref(null)
 const activeItemForNote = ref(null)
 const itemNoteInput = ref('')
 const itemVariantsInput = ref([])
+const variantError = ref('')
 
 const defaultCategories = ['SEMUA', 'FAVORIT', 'KOPI', 'NON-KOPI', 'PASTRY']
 
@@ -139,22 +140,38 @@ function bundleSaveInfo(item) {
   return bundleSavings(item.bundle_items, store.menuItems, item.price)
 }
 
+const activeVariantGroups = computed(() =>
+  activeItemForNote.value ? parseVariantGroups(activeItemForNote.value.variants) : []
+)
+
 function openNoteModal(item) {
-  if (item.is_available === false) return
+  if (item.is_available === false || store.orderingPaused) return
   activeItemForNote.value = item
   itemNoteInput.value = ''
   itemVariantsInput.value = []
+  variantError.value = ''
 }
 
 function closeNoteModal() {
   activeItemForNote.value = null
   itemNoteInput.value = ''
   itemVariantsInput.value = []
+  variantError.value = ''
 }
 
-function toggleModalVariant(name) {
-  const idx = itemVariantsInput.value.indexOf(name)
-  if (idx === -1) itemVariantsInput.value.push(name)
+function selectGroupOption(group, optKey) {
+  variantError.value = ''
+  if (!group.multiple) {
+    const groupKeys = new Set(group.options.map((o) => o.key))
+    const already = itemVariantsInput.value.includes(optKey)
+    itemVariantsInput.value = itemVariantsInput.value.filter((k) => !groupKeys.has(k))
+    if (!already || group.required) {
+      itemVariantsInput.value.push(optKey)
+    }
+    return
+  }
+  const idx = itemVariantsInput.value.indexOf(optKey)
+  if (idx === -1) itemVariantsInput.value.push(optKey)
   else itemVariantsInput.value.splice(idx, 1)
 }
 
@@ -165,14 +182,22 @@ function modalVariantExtra() {
 }
 
 function confirmAddWithNote() {
-  if (!activeItemForNote.value || activeItemForNote.value.is_available === false) return
+  if (!activeItemForNote.value || activeItemForNote.value.is_available === false || store.orderingPaused) return
+  const missing = activeVariantGroups.value
+    .filter((g) => g.required)
+    .filter((g) => !g.options.some((o) => itemVariantsInput.value.includes(o.key)))
+    .map((g) => g.group || 'Varian')
+  if (missing.length > 0) {
+    variantError.value = `Mohon pilih varian wajib: ${missing.join(', ')}`
+    return
+  }
   store.addToCart(activeItemForNote.value, itemNoteInput.value, itemVariantsInput.value)
   selectedItemForCaption.value = activeItemForNote.value
   closeNoteModal()
 }
 
 function handleAdd(item) {
-  if (item.is_available === false) return
+  if (item.is_available === false || store.orderingPaused) return
   if (parseVariants(item.variants).length > 0) {
     openNoteModal(item)
     return
@@ -562,7 +587,8 @@ function getItemType(item) {
                         <button 
                           type="button" 
                           class="stepper-btn" 
-                          :disabled="item.is_available === false"
+                          :disabled="item.is_available === false || store.orderingPaused"
+                          :title="store.orderingPaused ? 'Pemesanan sedang dijeda' : 'Tambah porsi'"
                           @click.stop="handleAdd(item)"
                         >
                           +
@@ -572,10 +598,11 @@ function getItemType(item) {
                         v-else 
                         type="button" 
                         class="btn-add-pesan font-mono" 
-                        :disabled="item.is_available === false"
+                        :disabled="item.is_available === false || store.orderingPaused"
+                        :title="store.orderingPaused ? 'Pemesanan sedang dijeda' : 'Pesan menu ini'"
                         @click.stop="handleAdd(item)"
                       >
-                        PESAN
+                        {{ store.orderingPaused ? 'DIJEDA' : 'PESAN' }}
                       </button>
                     </div>
                   </div>
@@ -609,24 +636,35 @@ function getItemType(item) {
         </div>
         <p class="variant-modal-price">{{ formatRupiah(activeItemForNote.price) }}</p>
 
-        <div v-if="parseVariants(activeItemForNote.variants).length > 0" class="variant-modal-group">
-          <label class="variant-modal-label">Varian (boleh pilih lebih dari satu)</label>
-          <div class="variant-pick-list">
-            <button
-              v-for="v in parseVariants(activeItemForNote.variants)"
-              :key="v.name"
-              type="button"
-              class="variant-chip"
-              :class="{ active: itemVariantsInput.includes(v.name) }"
-              @click="toggleModalVariant(v.name)"
-            >
-              <span class="variant-check">{{ itemVariantsInput.includes(v.name) ? '✓' : '' }}</span>
-              <span>{{ v.name }}</span>
-              <span class="variant-price">{{ v.price > 0 ? `+${formatRupiah(v.price)}` : 'Gratis' }}</span>
-            </button>
+        <div v-if="activeVariantGroups.length > 0" class="variant-groups-wrap">
+          <div v-for="(grp, gIdx) in activeVariantGroups" :key="grp.group || gIdx" class="variant-modal-group">
+            <label class="variant-modal-label">
+              <span>{{ grp.group || 'Varian' }}</span>
+              <span v-if="grp.required" style="color: #DC2626; margin-left: 3px;">*</span>
+              <span style="font-weight: 400; color: #78716C; font-size: 0.78rem; margin-left: 6px;">
+                {{ grp.multiple ? '(Boleh pilih lebih dari satu)' : '(Pilih salah satu)' }}
+              </span>
+            </label>
+            <div class="variant-pick-list">
+              <button
+                v-for="opt in grp.options"
+                :key="opt.key"
+                type="button"
+                class="variant-chip"
+                :class="{ active: itemVariantsInput.includes(opt.key) }"
+                @click="selectGroupOption(grp, opt.key)"
+              >
+                <span class="variant-check">{{ itemVariantsInput.includes(opt.key) ? (grp.multiple ? '✓' : '●') : '' }}</span>
+                <span>{{ opt.name }}</span>
+                <span class="variant-price">{{ opt.price > 0 ? `+${formatRupiah(opt.price)}` : 'Gratis' }}</span>
+              </button>
+            </div>
           </div>
+          <p v-if="variantError" style="color: #DC2626; font-size: 0.82rem; font-weight: 700; margin: 0.25rem 0 0;">
+            {{ variantError }}
+          </p>
           <p v-if="modalVariantExtra() > 0" class="variant-modal-hint">
-            Tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
+            Total tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
           </p>
         </div>
 
@@ -642,7 +680,7 @@ function getItemType(item) {
     </div>
 
     <!-- 3. Floating Cart Bar at bottom -->
-    <div v-if="store.cartCount > 0" class="floating-cart-bar">
+    <div v-if="store.cartCount > 0 && !store.orderingPaused" class="floating-cart-bar">
       <div class="cart-bar-inner">
         <div class="cart-bar-meta font-mono">
           <span class="cart-bar-qty">{{ store.cartCount }} PORSI</span>

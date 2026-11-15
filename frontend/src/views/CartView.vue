@@ -148,6 +148,8 @@ function continueShopping() {
                   <button 
                     type="button" 
                     class="step-btn" 
+                    :disabled="store.orderingPaused"
+                    :title="store.orderingPaused ? 'Pemesanan sedang dijeda' : 'Tambah jumlah'"
                     @click="handleQuantityChange(item.key || item.id, 1)"
                   >
                     +
@@ -201,9 +203,10 @@ function continueShopping() {
             <button 
               type="button" 
               class="btn btn-primary btn-checkout-submit" 
+              :disabled="store.orderingPaused"
               @click="proceedToCheckout"
             >
-              LANJUT KE PEMBAYARAN &rarr;
+              {{ store.orderingPaused ? 'PEMESANAN SEDANG DIJEDA' : 'LANJUT KE PEMBAYARAN →' }}
             </button>
           </div>
         </div>
