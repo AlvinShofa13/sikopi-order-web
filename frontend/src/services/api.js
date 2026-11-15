@@ -191,6 +191,12 @@ export const api = {
         body: JSON.stringify(payload)
       })
     },
+    async updateBatch(batchId, payload) {
+      return request(`/preorder/batches/${batchId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      })
+    },
     async closeBatch(batchId) {
       return request(`/preorder/batches/${batchId}/close`, {
         method: 'PATCH'

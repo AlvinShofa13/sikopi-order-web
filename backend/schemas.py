@@ -151,3 +151,12 @@ class PreorderBatchCreate(BaseModel):
     name: str
     order_deadline: Optional[datetime] = None
     pickup_date: Optional[datetime] = None
+    notes: Optional[str] = ""
+    activate_now: bool = True
+
+
+class PreorderBatchUpdate(BaseModel):
+    name: Optional[str] = None
+    order_deadline: Optional[datetime] = None
+    pickup_date: Optional[datetime] = None
+    notes: Optional[str] = None

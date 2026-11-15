@@ -41,6 +41,9 @@ function formatDateTime(iso) {
           <span v-if="formatDateTime(batch.orderDeadline)" class="time-meta">
             · Batas: {{ formatDateTime(batch.orderDeadline) }}
           </span>
+          <span v-if="batch.notes" class="time-meta">
+            · {{ batch.notes }}
+          </span>
         </div>
       </div>
 

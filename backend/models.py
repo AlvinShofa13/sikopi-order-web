@@ -109,6 +109,7 @@ class PreorderBatch(Base):
     name = Column(String(150), nullable=False)
     order_deadline = Column(DateTime, nullable=True)
     pickup_date = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
     status = Column(String(20), nullable=False, default="open", index=True)
     created_at = Column(DateTime, default=utc_now)
 

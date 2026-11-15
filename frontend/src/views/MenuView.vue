@@ -125,6 +125,9 @@ function goToCart() {
               <template v-if="store.activeBatch.pickupDate">
                 — siap diambil {{ formatDateTime(store.activeBatch.pickupDate) }}
               </template>
+              <template v-if="store.activeBatch.notes">
+                ({{ store.activeBatch.notes }})
+              </template>
               . Bisa pesan dari sini tanpa datang ke outlet.
             </span>
           </div>

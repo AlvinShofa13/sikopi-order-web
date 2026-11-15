@@ -120,7 +120,7 @@ function connectWebSocket() {
           const isNew = store.handleIncomingOrder(data.order)
           if (isNew) {
             playNewOrderChime()
-            showToast(`ðŸ”” Pesanan Baru Masuk! #${data.order.orderId} (${data.order.customer?.name || 'Pelanggan'})`, 'success')
+            showToast(`🔔 Pesanan Baru Masuk! #${data.order.orderId} (${data.order.customer?.name || 'Pelanggan'})`, 'success')
           }
         } else if (data.event === 'STATUS_UPDATED' && data.order) {
           const idx = store.orderHistory.findIndex(o => o.orderId === data.order.orderId)
@@ -161,7 +161,7 @@ async function syncRealtimeOrders() {
   const newCount = store.orderHistory.length
   if (prevOrderCount > 0 && newCount > prevOrderCount) {
     playNewOrderChime()
-    showToast('ðŸ”” Pesanan Baru Masuk!', 'success')
+    showToast('🔔 Pesanan Baru Masuk!', 'success')
   }
   prevOrderCount = newCount
 }
@@ -323,7 +323,8 @@ function handleLogout() {
 // ---- Mode operasional (saling eksklusif) & batch Open PO ----
 const modeSaving = ref(false)
 const batchList = ref([])
-const batchForm = ref({ name: '', orderDeadline: '', pickupDate: '' })
+const batchForm = ref({ name: '', orderDeadline: '', pickupDate: '', notes: '', activateNow: true })
+const editingBatchId = ref(null)
 const isCreatingBatch = ref(false)
 
 async function fetchModeSettings() {
@@ -385,25 +386,69 @@ async function releaseWaSession() {
   }
 }
 
+function toLocalDateTimeInput(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function startEditBatch(b) {
+  editingBatchId.value = b.id
+  batchForm.value = {
+    name: b.name || '',
+    orderDeadline: toLocalDateTimeInput(b.orderDeadline),
+    pickupDate: toLocalDateTimeInput(b.pickupDate),
+    notes: b.notes || '',
+    activateNow: b.status === 'open'
+  }
+}
+
+function cancelEditBatch() {
+  editingBatchId.value = null
+  batchForm.value = { name: '', orderDeadline: '', pickupDate: '', notes: '', activateNow: true }
+}
+
 async function createBatch() {
   if (!batchForm.value.name.trim()) {
     showToast('Nama batch wajib diisi.', 'error')
     return
   }
   isCreatingBatch.value = true
-  const res = await api.preorder.createBatch({
+  const payload = {
     name: batchForm.value.name.trim(),
     order_deadline: batchForm.value.orderDeadline ? new Date(batchForm.value.orderDeadline).toISOString() : null,
-    pickup_date: batchForm.value.pickupDate ? new Date(batchForm.value.pickupDate).toISOString() : null
-  })
+    pickup_date: batchForm.value.pickupDate ? new Date(batchForm.value.pickupDate).toISOString() : null,
+    notes: (batchForm.value.notes || '').trim()
+  }
+
+  let res
+  if (editingBatchId.value) {
+    res = await api.preorder.updateBatch(editingBatchId.value, payload)
+  } else {
+    res = await api.preorder.createBatch({
+      ...payload,
+      activate_now: batchForm.value.activateNow
+    })
+  }
   isCreatingBatch.value = false
   if (!res.ok) {
-    showToast(res.error || 'Gagal membuat batch.', 'error')
+    showToast(res.error || (editingBatchId.value ? 'Gagal memperbarui batch.' : 'Gagal membuat batch.'), 'error')
     return
   }
-  batchForm.value = { name: '', orderDeadline: '', pickupDate: '' }
+
+  const wasEditing = !!editingBatchId.value
+  const wasActivated = batchForm.value.activateNow
+  cancelEditBatch()
   await fetchModeSettings()
-  showToast('Batch Open PO baru dibuka. Customer otomatis masuk ke batch ini.')
+  showToast(
+    wasEditing
+      ? 'Batch Open PO berhasil diperbarui.'
+      : (wasActivated
+        ? 'Batch Open PO baru dibuka. Customer otomatis masuk ke batch ini.'
+        : 'Batch ditambahkan ke daftar antrean tanpa menutup batch aktif.')
+  )
 }
 
 async function closeBatch(batchId) {
@@ -464,7 +509,7 @@ function sendWaStatus(order, status) {
 
 const isSendingReceipt = ref(false)
 
-// Kirim nota digital langsung via gateway â€” tanpa membuka wa.me.
+// Kirim nota digital langsung via gateway — tanpa membuka wa.me.
 async function sendWaReceipt(order) {
   if (!order || isSendingReceipt.value) return
   isSendingReceipt.value = true
@@ -800,7 +845,7 @@ async function handleRenameCategory(id) {
 
 async function handleDeleteCategory(cat) {
   const n = categoryMenuCount(cat.name)
-  if (!confirm(`Hapus kategori "${cat.name}"?${n > 0 ? ` Masih dipakai ${n} menu â€” penghapusan akan ditolak.` : ''}`)) return
+  if (!confirm(`Hapus kategori "${cat.name}"?${n > 0 ? ` Masih dipakai ${n} menu — penghapusan akan ditolak.` : ''}`)) return
   const res = await store.deleteCategory(cat.id)
   if (!res.ok) {
     showToast(res.error || 'Gagal menghapus kategori.', 'error')
@@ -827,7 +872,7 @@ async function markOrderAsPaid(order) {
   }
 }
 
-// Kembalikan status lunas ke belum bayar (koreksi kasir â€” bisa diubah-ubah manual).
+// Kembalikan status lunas ke belum bayar (koreksi kasir — bisa diubah-ubah manual).
 async function revertPaidStatus(order) {
   if (!order || !order.payment?.paid) return
   if (!confirm(`Kembalikan pesanan #${order.orderId} ke "Menunggu Pembayaran"?`)) return
@@ -1336,7 +1381,7 @@ async function handleResetBranding() {
               <span class="dot-pulse"></span>
               <span>MODE PEMESANAN AKTIF</span>
             </div>
-            <span class="token-notice">Hanya satu mode yang aktif â€” customer tidak memilih</span>
+            <span class="token-notice">Hanya satu mode yang aktif — customer tidak memilih</span>
           </div>
 
           <div class="mode-segmented" role="tablist" aria-label="Mode pemesanan">
@@ -1360,7 +1405,7 @@ async function handleResetBranding() {
               @click="switchMode('preorder')"
             >
               <AppIcon name="clock" :size="16" />
-              <span>Open PO {{ store.activeBatch?.name ? `â€” ${store.activeBatch.name}` : '' }}</span>
+              <span>Open PO {{ store.activeBatch?.name ? `— ${store.activeBatch.name}` : '' }}</span>
             </button>
           </div>
 
@@ -1369,7 +1414,7 @@ async function handleResetBranding() {
             pembayaran memasukkan nama + nomor WhatsApp.
             <template v-if="store.activeMode === 'preorder'">
               Pada mode <strong>Open PO</strong> pesanan hanya tercatat setelah bukti pembayaran
-              diunggah, dan masuk otomatis ke batch <strong>{{ store.activeBatch?.name || 'â€”' }}</strong>.
+              diunggah, dan masuk otomatis ke batch <strong>{{ store.activeBatch?.name || '—' }}</strong>.
             </template>
             <template v-else>
               Pada mode <strong>On-site</strong> pesanan langsung tercatat; bayar di kasir atau
@@ -1392,7 +1437,7 @@ async function handleResetBranding() {
                     Scan QR dengan nomor WA khusus pengirim (Perangkat Tertaut).
                   </template>
                   <template v-else>
-                    Menunggu gateway wa-gatewayâ€¦ pastikan service berjalan.
+                    Menunggu gateway wa-gateway… pastikan service berjalan.
                   </template>
                 </span>
               </div>
@@ -1414,11 +1459,11 @@ async function handleResetBranding() {
                 type="button"
                 class="btn-act btn-cancel-order"
                 :disabled="isReleasingWa"
-                title="Putuskan nomor WA yang terpairing â€” perlu scan QR ulang, tanpa buka WhatsApp di HP"
+                title="Putuskan nomor WA yang terpairing — perlu scan QR ulang, tanpa buka WhatsApp di HP"
                 @click="releaseWaSession"
               >
                 <AppIcon name="close" :size="14" />
-                <span>{{ isReleasingWa ? 'Melepasâ€¦' : 'Lepas Sesi WA' }}</span>
+                <span>{{ isReleasingWa ? 'Melepas…' : 'Lepas Sesi WA' }}</span>
               </button>
               <span class="wa-release-hint">Melepas nomor yang terpairing. QR baru muncul otomatis untuk scan ulang.</span>
             </div>
@@ -1667,7 +1712,7 @@ async function handleResetBranding() {
           <div class="section-top-bar">
             <div>
               <h2 class="section-title">POS Kasir</h2>
-              <span class="section-subtitle">Buat pesanan langsung di kasir â€” tunai & lunas seketika, tanpa lewat web</span>
+              <span class="section-subtitle">Buat pesanan langsung di kasir — tunai & lunas seketika, tanpa lewat web</span>
             </div>
           </div>
           <AdminPosPanel :show-toast="showToast" />
@@ -1700,7 +1745,7 @@ async function handleResetBranding() {
               <input
                 v-model="newCategoryName"
                 type="text"
-                placeholder="Nama kategori baruâ€¦"
+                placeholder="Nama kategori baru…"
                 class="form-input"
                 @keyup.enter="handleAddCategory"
               />
@@ -1783,7 +1828,7 @@ async function handleResetBranding() {
                     type="button" 
                     class="btn-switch-toggle"
                     :class="item.is_available !== false ? 'switch-on' : 'switch-off'"
-                    :title="item.is_available !== false ? 'Status ON (Tersedia) â€” Klik untuk ubah ke OFF' : 'Status OFF (Habis) â€” Klik untuk ubah ke ON'"
+                    :title="item.is_available !== false ? 'Status ON (Tersedia) — Klik untuk ubah ke OFF' : 'Status OFF (Habis) — Klik untuk ubah ke ON'"
                     @click="handleToggleAvailability(item.id, item.is_available)"
                   >
                     <span class="switch-ball"></span>
@@ -1822,9 +1867,9 @@ async function handleResetBranding() {
             </button>
           </div>
 
-          <!-- Buat batch baru -->
+          <!-- Buat / Edit batch -->
           <div class="batch-form-card">
-            <h3 class="batch-form-title">Buka Batch Open PO Baru</h3>
+            <h3 class="batch-form-title">{{ editingBatchId ? 'Edit Batch Open PO' : 'Buat / Buka Batch Open PO Baru' }}</h3>
             <div class="batch-form-grid">
               <div class="input-field-batch">
                 <label class="field-label-batch" for="batch-name">Nama Batch *</label>
@@ -1832,7 +1877,7 @@ async function handleResetBranding() {
                   id="batch-name"
                   v-model="batchForm.name"
                   type="text"
-                  placeholder="Contoh: Batch 3 â€” Jumat 12 Des"
+                  placeholder="Contoh: Batch 3 — Jumat 12 Des"
                   class="text-input-batch"
                 />
               </div>
@@ -1854,12 +1899,42 @@ async function handleResetBranding() {
                   class="text-input-batch"
                 />
               </div>
+              <div class="input-field-batch batch-notes-field">
+                <label class="field-label-batch" for="batch-notes">Keterangan / Lokasi Pengambilan</label>
+                <input
+                  id="batch-notes"
+                  v-model="batchForm.notes"
+                  type="text"
+                  placeholder="Contoh: Ambil di Meja Depan Gedung A / Bawa bukti bayar"
+                  class="text-input-batch"
+                />
+              </div>
+              <div v-if="!editingBatchId" class="input-field-batch batch-activate-field">
+                <label class="batch-activate-check">
+                  <input type="checkbox" v-model="batchForm.activateNow" />
+                  <span>Langsung aktifkan sekarang (otomatis menutup batch yang sedang berjalan)</span>
+                </label>
+                <span class="field-hint">
+                  {{ batchForm.activateNow
+                    ? 'Batch langsung dibuka untuk pelanggan.'
+                    : 'Batch masuk daftar antrean (Terjadwal) tanpa menutup batch yang sedang aktif.' }}
+                </span>
+              </div>
               <div class="input-field-batch batch-form-action">
-                <button type="button" class="btn-primary-action" :disabled="isCreatingBatch" @click="createBatch">
-                  <AppIcon name="plus" :size="16" />
-                  <span>{{ isCreatingBatch ? 'Menyimpan...' : 'Buka Batch' }}</span>
-                </button>
-                <span class="field-hint">Membuka batch baru otomatis menutup batch sebelumnya.</span>
+                <div class="batch-action-btns">
+                  <button type="button" class="btn-primary-action" :disabled="isCreatingBatch" @click="createBatch">
+                    <AppIcon :name="editingBatchId ? 'check' : 'plus'" :size="16" />
+                    <span>
+                      {{ isCreatingBatch
+                        ? 'Menyimpan...'
+                        : (editingBatchId ? 'Simpan Perubahan' : (batchForm.activateNow ? 'Buka Batch' : 'Simpan ke Daftar')) }}
+                    </span>
+                  </button>
+                  <button v-if="editingBatchId" type="button" class="btn-act btn-cancel-order" @click="cancelEditBatch">
+                    <AppIcon name="close" :size="14" />
+                    <span>Batal Edit</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1867,7 +1942,7 @@ async function handleResetBranding() {
           <!-- Peringatan: gateway WA putus -->
           <div v-if="!store.waConnected" class="tokens-intro-banner warn">
             <AppIcon name="phone" :size="18" />
-            <span><strong>WhatsApp otomatis mati.</strong> Notifikasi pesanan tidak terkirim sampai gateway terhubung (scan QR di kartu atas) â€” tombol kirim manual tetap bisa dipakai.</span>
+            <span><strong>WhatsApp otomatis mati.</strong> Notifikasi pesanan tidak terkirim sampai gateway terhubung (scan QR di kartu atas) — tombol kirim manual tetap bisa dipakai.</span>
           </div>
 
           <!-- Daftar batch -->
@@ -1877,23 +1952,30 @@ async function handleResetBranding() {
           </div>
 
           <div v-else class="batch-list">
-            <div v-for="b in batchList" :key="b.id" class="batch-card" :class="{ open: b.status === 'open' }">
+            <div v-for="b in batchList" :key="b.id" class="batch-card" :class="{ open: b.status === 'open', scheduled: b.status === 'scheduled' }">
               <div class="batch-card-head">
                 <strong class="batch-card-name">{{ b.name }}</strong>
-                <span class="batch-status-tag" :class="b.status">{{ b.status === 'open' ? 'Dibuka' : 'Ditutup' }}</span>
+                <span class="batch-status-tag" :class="b.status">
+                  {{ b.status === 'open' ? 'Dibuka' : (b.status === 'scheduled' ? 'Terjadwal' : 'Ditutup') }}
+                </span>
               </div>
               <div class="batch-card-meta">
                 <span><AppIcon name="clock" :size="13" /> Batas pesan: <strong>{{ formatDateTimeShort(b.orderDeadline) }}</strong></span>
                 <span><AppIcon name="map-pin" :size="13" /> Siap ambil: <strong>{{ formatDateTimeShort(b.pickupDate) }}</strong></span>
+                <span v-if="b.notes" class="batch-notes-meta"><AppIcon name="receipt" :size="13" /> Ket: <strong>{{ b.notes }}</strong></span>
               </div>
               <div class="batch-card-actions">
+                <button type="button" class="btn-act btn-detail" @click="startEditBatch(b)" title="Edit nama, waktu, atau keterangan batch">
+                  <AppIcon name="sparkles" :size="14" />
+                  <span>Edit</span>
+                </button>
                 <button v-if="b.status === 'open'" type="button" class="btn-act btn-cancel-order" @click="closeBatch(b.id)">
                   <AppIcon name="close" :size="14" />
                   <span>Tutup Batch</span>
                 </button>
                 <button v-else type="button" class="btn-act btn-print" @click="reopenBatch(b.id)">
                   <AppIcon name="rotate-ccw" :size="14" />
-                  <span>Buka Lagi</span>
+                  <span>{{ b.status === 'scheduled' ? 'Aktifkan' : 'Buka Lagi' }}</span>
                 </button>
               </div>
             </div>
@@ -1943,7 +2025,7 @@ async function handleResetBranding() {
                     <div class="rank-bar">
                       <div class="rank-bar-fill" :style="{ width: ((m.qty / topMenuMaxQty) * 100).toFixed(1) + '%' }"></div>
                     </div>
-                    <div class="rank-sub font-mono">{{ formatRupiah(m.revenue) }} Â· {{ m.orders }} pesanan</div>
+                    <div class="rank-sub font-mono">{{ formatRupiah(m.revenue) }} · {{ m.orders }} pesanan</div>
                   </div>
                 </li>
               </ol>
@@ -2285,7 +2367,7 @@ async function handleResetBranding() {
                 <span class="lbl">Mode Pesanan:</span>
                 <span>
                   <strong>{{ selectedOrder.channel === 'preorder' ? 'Open PO' : 'On-site' }}</strong>
-                  <template v-if="selectedOrder.batch?.name"> Â· Batch {{ selectedOrder.batch.name }}</template>
+                  <template v-if="selectedOrder.batch?.name"> · Batch {{ selectedOrder.batch.name }}</template>
                 </span>
               </div>
               <div class="meta-line">
@@ -2330,7 +2412,7 @@ async function handleResetBranding() {
                   @click="markOrderAsPaid(selectedOrder)"
                 >
                   <AppIcon name="check" :size="18" />
-                  <span>Bukti Sesuai â€” Tandai Lunas</span>
+                  <span>Bukti Sesuai — Tandai Lunas</span>
                 </button>
                 <button
                   v-else
@@ -2349,7 +2431,7 @@ async function handleResetBranding() {
                   @click="sendWaReceipt(selectedOrder)"
                 >
                   <AppIcon name="phone" :size="14" />
-                  <span>{{ isSendingReceipt ? 'Mengirimâ€¦' : 'Kirim Nota Digital' }}</span>
+                  <span>{{ isSendingReceipt ? 'Mengirim…' : 'Kirim Nota Digital' }}</span>
                 </button>
               </div>
             </div>
@@ -2383,13 +2465,13 @@ async function handleResetBranding() {
                 <div class="qris-title-group">
                   <AppIcon name="qr-code" :size="22" class="qris-icon" />
                   <div>
-                    <h4 class="qris-title">QRIS â€” Scan untuk Bayar</h4>
+                    <h4 class="qris-title">QRIS — Scan untuk Bayar</h4>
                     <p class="qris-subtitle">BCA, Mandiri, BRI, BNI, GoPay, OVO, ShopeePay, Dana, LinkAja</p>
                   </div>
                 </div>
                 <div class="qris-merchant-pill">
                   <span class="merchant-name-text">AZRIEL SABIQ GAMING GEAR</span>
-                  <span class="nmid-mini-text font-mono">NMID: ID1026528966314 Â· A01</span>
+                  <span class="nmid-mini-text font-mono">NMID: ID1026528966314 · A01</span>
                 </div>
               </div>
 
@@ -2601,7 +2683,7 @@ async function handleResetBranding() {
               </div>
               <p class="prep-control-sub">
                 Mengubah status langsung tersinkron ke halaman status pelanggan. Untuk memberi kabar
-                lewat WhatsApp, pakai tombol di bawah â€” WhatsApp terbuka dengan pesan sudah terisi,
+                lewat WhatsApp, pakai tombol di bawah — WhatsApp terbuka dengan pesan sudah terisi,
                 tinggal tekan <strong>Kirim</strong>.
               </p>
               <div class="prep-pill-group">
@@ -2730,7 +2812,7 @@ async function handleResetBranding() {
                   <p>Silakan sobek kertas struk dapur. Struk 2 (Pelanggan) akan dicetak dalam {{ tearCountdown }}s.</p>
                 </div>
                 <button type="button" class="btn-tear-now" @click="confirmTearAndContinue">
-                  <span>Sudah Disobek Â· Cetak Struk Pelanggan Sekarang</span>
+                  <span>Sudah Disobek · Cetak Struk Pelanggan Sekarang</span>
                 </button>
               </div>
 
@@ -2845,7 +2927,7 @@ async function handleResetBranding() {
                     <em class="font-mono">{{ formatRupiah(cand.price) }}</em>
                   </span>
                   <div class="bundle-qty-ctrl">
-                    <button type="button" class="bundle-qty-btn" @click="setBundleLineQty(cand.id, bundleLineQty(cand.id) - 1)">âˆ’</button>
+                    <button type="button" class="bundle-qty-btn" @click="setBundleLineQty(cand.id, bundleLineQty(cand.id) - 1)">−</button>
                     <span class="bundle-qty-num">{{ bundleLineQty(cand.id) }}</span>
                     <button type="button" class="bundle-qty-btn" @click="setBundleLineQty(cand.id, bundleLineQty(cand.id) + 1)">+</button>
                   </div>
@@ -2867,7 +2949,7 @@ async function handleResetBranding() {
             <div class="form-group">
               <span class="form-label">Varian Menu (opsional)</span>
               <div v-if="(menuForm.variants || []).length === 0" class="variant-empty">
-                Belum ada varian. Tambahkan bila menu ini punya pilihan â€” mis. "Es" gratis atau "Extra Shot" +Rp5.000.
+                Belum ada varian. Tambahkan bila menu ini punya pilihan — mis. "Es" gratis atau "Extra Shot" +Rp5.000.
               </div>
               <div v-for="(v, idx) in (menuForm.variants || [])" :key="idx" class="variant-edit-row">
                 <input v-model="v.name" type="text" placeholder="Nama varian (mis. Es)" class="form-input" />
@@ -4520,9 +4602,39 @@ async function handleResetBranding() {
 
 .batch-form-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr) auto;
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
   align-items: flex-end;
+}
+
+.batch-notes-field {
+  grid-column: 1 / -1;
+}
+
+.batch-activate-field {
+  grid-column: 1 / 3;
+}
+
+.batch-activate-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--color-text-main);
+  cursor: pointer;
+}
+
+.batch-activate-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}
+
+.batch-action-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .input-field-batch {
@@ -4574,6 +4686,11 @@ async function handleResetBranding() {
   background-color: var(--color-primary-soft);
 }
 
+.batch-card.scheduled {
+  border-color: #F59E0B;
+  background-color: #FFFBEB;
+}
+
 .batch-card-head {
   display: flex;
   align-items: center;
@@ -4599,6 +4716,11 @@ async function handleResetBranding() {
 .batch-status-tag.open {
   background-color: #D1FAE5;
   color: #065F46;
+}
+
+.batch-status-tag.scheduled {
+  background-color: #FEF3C7;
+  color: #92400E;
 }
 
 .batch-status-tag.closed {

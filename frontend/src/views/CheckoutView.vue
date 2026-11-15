@@ -242,6 +242,9 @@ async function handleSubmitOrder() {
                   <span v-if="store.activeBatch.pickupDate" class="name-tag">
                     SIAP: {{ formatDateTime(store.activeBatch.pickupDate) }}
                   </span>
+                  <span v-if="store.activeBatch.notes" class="name-tag">
+                    INFO: {{ store.activeBatch.notes }}
+                  </span>
                 </div>
                 <div v-else class="mode-badge-row">
                   <span class="name-tag name-tag-primary">MODE: HARI JUALAN (ON-SITE)</span>
