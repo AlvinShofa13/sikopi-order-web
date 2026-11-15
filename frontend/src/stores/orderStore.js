@@ -291,7 +291,7 @@ export const useOrderStore = defineStore('order', () => {
   // Total satu baris = (harga satuan + ekstra varian) x jumlah.
   function lineTotal(line) {
     const menu = menuById(line.id)
-    const extra = menu ? variantExtras(menu, line.variants) : 0
+    const extra = menu ? variantExtras(menu, line.variants, menuItems.value) : 0
     return (Number(line.price || 0) + extra) * Number(line.quantity || 0)
   }
 

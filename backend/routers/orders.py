@@ -426,91 +426,117 @@ def _parse_menu_variants(menu_item) -> list:
     return rows if isinstance(rows, list) else []
 
 
-def _resolve_variant_extras(menu_item, wanted, *, require_variants: bool = True) -> tuple:
-    """Cocokkan varian pilihan dengan daftar resmi menu (harga dari server).
+def _collect_variant_specs(db: Session, menu_item) -> tuple[dict, dict]:
+    """Kumpulkan seluruh aturan grup & harga varian resmi untuk menu maupun isi paket bundel.
 
-    Mendukung format grup ([{"group": ..., "required": bool, "multiple": bool, "options": [{"name": ..., "price": ...}]}])
-    maupun format flat lama ([{"name": ..., "price": ...}]).
+    Mengembalikan (by_key, group_meta):
+    - by_key: {key: (full_group_id, price)}
+    - group_meta: {full_group_id: {"label": str, "required": bool, "multiple": bool}}
+    """
+    sources = [("", menu_item.name, _parse_menu_variants(menu_item))]
+    if getattr(menu_item, "is_bundle", False):
+        try:
+            lines = json.loads(getattr(menu_item, "bundle_items", None) or "[]")
+        except (ValueError, TypeError):
+            lines = []
+        for line in lines if isinstance(lines, list) else []:
+            if not isinstance(line, dict):
+                continue
+            comp_id = (line.get("id") or "").strip()
+            if not comp_id:
+                continue
+            comp = db.query(MenuItem).filter(MenuItem.id == comp_id).first()
+            if comp:
+                comp_vars = _parse_menu_variants(comp)
+                if comp_vars:
+                    sources.append((f"[{comp.name}] ", comp.name, comp_vars))
+
+    by_key = {}
+    group_meta = {}
+    for prefix, source_name, rows in sources:
+        if not rows:
+            continue
+        is_grouped = any(isinstance(r, dict) and ("group" in r or "options" in r) for r in rows)
+        if is_grouped:
+            for grp in rows:
+                if not isinstance(grp, dict):
+                    continue
+                gname = (grp.get("group") or "").strip()
+                if not gname:
+                    continue
+                full_gid = f"{prefix}{gname}"
+                group_meta[full_gid] = {
+                    "label": f"{gname} ({source_name})" if prefix else gname,
+                    "required": bool(grp.get("required", False)),
+                    "multiple": bool(grp.get("multiple", False)),
+                }
+                for opt in (grp.get("options") or []):
+                    if not isinstance(opt, dict):
+                        continue
+                    oname = (opt.get("name") or "").strip()
+                    if not oname:
+                        continue
+                    price = float(opt.get("price") or 0.0)
+                    key = f"{prefix}{gname}: {oname}"
+                    by_key[key] = (full_gid, price)
+        else:
+            full_gid = f"{prefix}__flat__"
+            group_meta[full_gid] = {
+                "label": source_name,
+                "required": False,
+                "multiple": True,
+            }
+            for row in rows:
+                if isinstance(row, dict) and (row.get("name") or "").strip():
+                    oname = (row.get("name") or "").strip()
+                    key = f"{prefix}{oname}"
+                    by_key.setdefault(key, (full_gid, float(row.get("price") or 0.0)))
+    return by_key, group_meta
+
+
+def _resolve_variant_extras(db: Session, menu_item, wanted, *, require_variants: bool = True) -> tuple:
+    """Cocokkan varian pilihan dengan daftar resmi menu & isi paket bundel (harga dari server).
+
     Mengembalikan (names, extra_per_porsi). Melempar 422 bila ada varian tak dikenal atau grup wajib kosong.
     """
-    official = _parse_menu_variants(menu_item)
     names = [str(v).strip() for v in (wanted or []) if str(v).strip()]
-    is_grouped = any(isinstance(r, dict) and ("group" in r or "options" in r) for r in official)
+    by_key, group_meta = _collect_variant_specs(db, menu_item)
 
-    if is_grouped:
-        by_key = {}
-        group_meta = {}
-        for grp in official:
-            if not isinstance(grp, dict):
-                continue
-            gname = (grp.get("group") or "").strip()
-            if not gname:
-                continue
-            group_meta[gname] = {
-                "required": bool(grp.get("required", False)),
-                "multiple": bool(grp.get("multiple", False)),
-            }
-            for opt in (grp.get("options") or []):
-                if not isinstance(opt, dict):
-                    continue
-                oname = (opt.get("name") or "").strip()
-                if not oname:
-                    continue
-                price = float(opt.get("price") or 0.0)
-                key = f"{gname}: {oname}"
-                by_key[key] = (gname, price)
-
-        resolved = []
-        extra = 0.0
-        selected_per_group: dict[str, list[str]] = {}
-        for raw_name in names:
-            if raw_name not in by_key:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Varian '{raw_name}' tidak dikenal pada menu '{menu_item.name}'.",
-                )
-            gname, price = by_key[raw_name]
-            if raw_name not in resolved:
-                resolved.append(raw_name)
-                extra += price
-                selected_per_group.setdefault(gname, []).append(raw_name)
-
-        for gname, meta in group_meta.items():
-            picked = selected_per_group.get(gname, [])
-            if require_variants and meta["required"] and len(picked) == 0:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Pilihan '{gname}' wajib dipilih pada menu '{menu_item.name}'.",
-                )
-            if not meta["multiple"] and len(picked) > 1:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Pilihan '{gname}' pada menu '{menu_item.name}' hanya boleh memilih 1 opsi.",
-                )
-        return resolved, extra
-
-    if not names:
-        return [], 0.0
-    if not official:
+    if not by_key:
+        if not names:
+            return [], 0.0
         raise HTTPException(
             status_code=422,
             detail=f"Menu '{menu_item.name}' tidak punya varian. Muat ulang halaman menu.",
         )
-    by_name = {}
-    for row in official:
-        if isinstance(row, dict) and (row.get("name") or "").strip():
-            by_name.setdefault((row.get("name") or "").strip(), float(row.get("price") or 0.0))
+
     resolved = []
     extra = 0.0
-    for name in names:
-        if name not in by_name:
+    selected_per_group: dict[str, list[str]] = {}
+    for raw_name in names:
+        if raw_name not in by_key:
             raise HTTPException(
                 status_code=422,
-                detail=f"Varian '{name}' tidak dikenal pada menu '{menu_item.name}'.",
+                detail=f"Varian '{raw_name}' tidak dikenal pada menu '{menu_item.name}'.",
             )
-        if name not in resolved:
-            resolved.append(name)
-            extra += by_name[name]
+        full_gid, price = by_key[raw_name]
+        if raw_name not in resolved:
+            resolved.append(raw_name)
+            extra += price
+            selected_per_group.setdefault(full_gid, []).append(raw_name)
+
+    for full_gid, meta in group_meta.items():
+        picked = selected_per_group.get(full_gid, [])
+        if require_variants and meta["required"] and len(picked) == 0:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Pilihan '{meta['label']}' wajib dipilih pada menu '{menu_item.name}'.",
+            )
+        if not meta["multiple"] and len(picked) > 1:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Pilihan '{meta['label']}' pada menu '{menu_item.name}' hanya boleh memilih 1 opsi.",
+            )
     return resolved, extra
 
 
@@ -539,7 +565,7 @@ def _price_with_breakdown(db: Session, items, *, require_variants: bool = True) 
         # paket walau paket diubah/dihapus kemudian).
         bundle_label = _bundle_contents_label(db, menu_item)
         # Varian: harga ekstra selalu dari server (abaikan harga client).
-        variant_names, variant_extra = _resolve_variant_extras(menu_item, it.variants, require_variants=require_variants)
+        variant_names, variant_extra = _resolve_variant_extras(db, menu_item, it.variants, require_variants=require_variants)
         if variant_extra:
             line_total += variant_extra * int(it.quantity)
             subtotal += variant_extra * int(it.quantity)

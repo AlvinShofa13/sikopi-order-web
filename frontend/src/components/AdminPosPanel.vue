@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, bundleContentsLabel, bundleSavings, parseVariants, parseVariantGroups, variantExtras } from '@/utils/format'
+import { formatRupiah, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras } from '@/utils/format'
 import { generateQrisDataUrl } from '@/utils/qris'
 import { isBluetoothSupported, printReceiptViaBluetooth } from '@/utils/bluetoothPrinter'
 import AppIcon from '@/components/icons/AppIcon.vue'
@@ -50,7 +50,7 @@ function posMenuOf(line) {
 
 function posLineExtras(line) {
   const menu = posMenuOf(line)
-  return menu ? variantExtras(menu, line.variants) : 0
+  return menu ? variantExtras(menu, line.variants, store.menuItems) : 0
 }
 
 function posLineTotal(line) {
@@ -63,9 +63,9 @@ function posCartQty(menuId) {
     .reduce((sum, l) => sum + Number(l.qty || 0), 0)
 }
 
-function posMenuGroups(line) {
+function posMenuSections(line) {
   const menu = posMenuOf(line)
-  return menu ? parseVariantGroups(menu.variants) : []
+  return menu ? parseMenuVariantSections(menu, store.menuItems) : []
 }
 
 function selectPosGroupOption(line, group, optKey) {
@@ -363,23 +363,32 @@ function startNewOrder() {
               </div>
               <span class="pos-line-subtotal font-mono">{{ formatRupiah(posLineTotal(l)) }}</span>
             </div>
-            <div v-if="posMenuGroups(l).length > 0" class="pos-variant-groups">
-              <div v-for="(grp, gIdx) in posMenuGroups(l)" :key="grp.group || gIdx" class="pos-variant-group">
-                <span v-if="grp.group" class="pos-variant-group-label">
-                  {{ grp.group }}<span v-if="grp.required" class="pos-req-star">*</span>
-                </span>
-                <div class="pos-variant-row">
-                  <button
-                    v-for="opt in grp.options"
-                    :key="opt.key"
-                    type="button"
-                    class="pos-variant-chip"
-                    :class="{ active: l.variants.includes(opt.key) }"
-                    @click="selectPosGroupOption(l, grp, opt.key)"
-                  >
-                    <span class="pos-var-check">{{ l.variants.includes(opt.key) ? '✓' : '' }}</span>
-                    <span>{{ opt.name }}{{ opt.price > 0 ? ` +${formatRupiah(opt.price)}` : '' }}</span>
-                  </button>
+            <div v-if="posMenuSections(l).length > 0" class="pos-variant-sections">
+              <div
+                v-for="(sec, sIdx) in posMenuSections(l)"
+                :key="sec.title || sIdx"
+                :class="{ 'pos-variant-section-box': !!sec.title }"
+              >
+                <div v-if="sec.title" class="pos-variant-section-title">{{ sec.title }}</div>
+                <div class="pos-variant-groups">
+                  <div v-for="(grp, gIdx) in sec.groups" :key="grp.group || gIdx" class="pos-variant-group">
+                    <span v-if="grp.group" class="pos-variant-group-label">
+                      {{ grp.group }}<span v-if="grp.required" class="pos-req-star">*</span>
+                    </span>
+                    <div class="pos-variant-row">
+                      <button
+                        v-for="opt in grp.options"
+                        :key="opt.key"
+                        type="button"
+                        class="pos-variant-chip"
+                        :class="{ active: l.variants.includes(opt.key) }"
+                        @click="selectPosGroupOption(l, grp, opt.key)"
+                      >
+                        <span class="pos-var-check">{{ l.variants.includes(opt.key) ? '✓' : '' }}</span>
+                        <span>{{ opt.name }}{{ opt.price > 0 ? ` +${formatRupiah(opt.price)}` : '' }}</span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -663,11 +672,35 @@ function startNewOrder() {
   line-height: 1;
 }
 .pos-line-subtotal { font-size: 0.85rem; font-weight: 700; }
-.pos-variant-groups {
+.pos-variant-sections {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.pos-variant-section-box {
+  border: 1.5px solid var(--color-primary, #2C4A3E);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background-color: #FAF9F6;
+}
+.pos-variant-section-title {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #FFFFFF;
+  background-color: var(--color-primary, #2C4A3E);
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-bottom: 4px;
+}
+.pos-variant-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .pos-variant-group {
   display: flex;

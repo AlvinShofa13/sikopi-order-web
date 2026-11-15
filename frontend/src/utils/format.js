@@ -137,9 +137,60 @@ export function variantsLabel(variantsRaw) {
     .join(' · ')
 }
 
-// Total biaya tambahan varian terpilih (harga dari daftar resmi menu).
-export function variantExtras(menuItem, selectedNames = []) {
-  const byName = new Map(parseVariants(menuItem?.variants).map((v) => [v.name, v.price]))
+// Kumpulkan seluruh bagian varian untuk menu tunggal maupun paket bundel (termasuk varian tiap item di dalam paket).
+// -> [{ title, sourceName, groups: [{ group, required, multiple, options: [{ name, price, key }] }] }]
+export function parseMenuVariantSections(menuItem, allMenuItems = []) {
+  if (!menuItem) return []
+  const sections = []
+  const ownGroups = parseVariantGroups(menuItem.variants)
+  if (ownGroups.length > 0) {
+    sections.push({
+      title: menuItem.is_bundle ? `Varian Paket (${menuItem.name})` : '',
+      sourceName: menuItem.name || '',
+      groups: ownGroups
+    })
+  }
+  if (menuItem.is_bundle && Array.isArray(allMenuItems) && allMenuItems.length > 0) {
+    const byId = new Map(allMenuItems.map((m) => [m.id, m]))
+    for (const line of parseBundleItems(menuItem.bundle_items)) {
+      const comp = byId.get(line.id)
+      if (!comp) continue
+      const compGroups = parseVariantGroups(comp.variants)
+      if (compGroups.length === 0) continue
+      const prefix = `[${comp.name}] `
+      sections.push({
+        title: `${line.quantity}x ${comp.name}`,
+        sourceName: comp.name,
+        groups: compGroups.map((g) => ({
+          ...g,
+          options: g.options.map((o) => ({
+            ...o,
+            key: `${prefix}${o.key}`
+          }))
+        }))
+      })
+    }
+  }
+  return sections
+}
+
+// Total biaya tambahan varian terpilih (harga dari daftar resmi menu & isi paket bundel).
+export function variantExtras(menuItem, selectedNames = [], allMenuItems = []) {
+  const sections = parseMenuVariantSections(menuItem, allMenuItems)
+  const byName = new Map()
+  if (sections.length > 0) {
+    for (const sec of sections) {
+      for (const g of sec.groups) {
+        for (const o of g.options) {
+          byName.set(o.key, o.price)
+        }
+      }
+    }
+  } else {
+    for (const v of parseVariants(menuItem?.variants)) {
+      byName.set(v.name, v.price)
+    }
+  }
   return (selectedNames || []).reduce((sum, n) => sum + (byName.get(n) || 0), 0)
 }
 

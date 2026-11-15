@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, parseVariants, parseVariantGroups, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
+import { formatRupiah, parseVariants, parseMenuVariantSections, variantExtras, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
 
 const router = useRouter()
 const store = useOrderStore()
@@ -140,8 +140,8 @@ function bundleSaveInfo(item) {
   return bundleSavings(item.bundle_items, store.menuItems, item.price)
 }
 
-const activeVariantGroups = computed(() =>
-  activeItemForNote.value ? parseVariantGroups(activeItemForNote.value.variants) : []
+const activeVariantSections = computed(() =>
+  activeItemForNote.value ? parseMenuVariantSections(activeItemForNote.value, store.menuItems) : []
 )
 
 function openNoteModal(item) {
@@ -177,16 +177,19 @@ function selectGroupOption(group, optKey) {
 
 function modalVariantExtra() {
   if (!activeItemForNote.value) return 0
-  const byName = new Map(parseVariants(activeItemForNote.value.variants).map((v) => [v.name, v.price]))
-  return itemVariantsInput.value.reduce((s, n) => s + (byName.get(n) || 0), 0)
+  return variantExtras(activeItemForNote.value, itemVariantsInput.value, store.menuItems)
 }
 
 function confirmAddWithNote() {
   if (!activeItemForNote.value || activeItemForNote.value.is_available === false || store.orderingPaused) return
-  const missing = activeVariantGroups.value
-    .filter((g) => g.required)
-    .filter((g) => !g.options.some((o) => itemVariantsInput.value.includes(o.key)))
-    .map((g) => g.group || 'Varian')
+  const missing = []
+  for (const sec of activeVariantSections.value) {
+    for (const g of sec.groups) {
+      if (g.required && !g.options.some((o) => itemVariantsInput.value.includes(o.key))) {
+        missing.push(sec.title ? `${sec.sourceName}: ${g.group || 'Varian'}` : (g.group || 'Varian'))
+      }
+    }
+  }
   if (missing.length > 0) {
     variantError.value = `Mohon pilih varian wajib: ${missing.join(', ')}`
     return
@@ -198,7 +201,7 @@ function confirmAddWithNote() {
 
 function handleAdd(item) {
   if (item.is_available === false || store.orderingPaused) return
-  if (parseVariants(item.variants).length > 0) {
+  if (parseMenuVariantSections(item, store.menuItems).length > 0) {
     openNoteModal(item)
     return
   }
@@ -636,28 +639,39 @@ function getItemType(item) {
         </div>
         <p class="variant-modal-price">{{ formatRupiah(activeItemForNote.price) }}</p>
 
-        <div v-if="activeVariantGroups.length > 0" class="variant-groups-wrap">
-          <div v-for="(grp, gIdx) in activeVariantGroups" :key="grp.group || gIdx" class="variant-modal-group">
-            <label class="variant-modal-label">
-              <span>{{ grp.group || 'Varian' }}</span>
-              <span v-if="grp.required" style="color: #DC2626; margin-left: 3px;">*</span>
-              <span style="font-weight: 400; color: #78716C; font-size: 0.78rem; margin-left: 6px;">
-                {{ grp.multiple ? '(Boleh pilih lebih dari satu)' : '(Pilih salah satu)' }}
-              </span>
-            </label>
-            <div class="variant-pick-list">
-              <button
-                v-for="opt in grp.options"
-                :key="opt.key"
-                type="button"
-                class="variant-chip"
-                :class="{ active: itemVariantsInput.includes(opt.key) }"
-                @click="selectGroupOption(grp, opt.key)"
-              >
-                <span class="variant-check">{{ itemVariantsInput.includes(opt.key) ? (grp.multiple ? '✓' : '●') : '' }}</span>
-                <span>{{ opt.name }}</span>
-                <span class="variant-price">{{ opt.price > 0 ? `+${formatRupiah(opt.price)}` : 'Gratis' }}</span>
-              </button>
+        <div v-if="activeVariantSections.length > 0" class="variant-sections-scroll">
+          <div
+            v-for="(sec, sIdx) in activeVariantSections"
+            :key="sec.title || sIdx"
+            :class="{ 'variant-product-section': !!sec.title }"
+          >
+            <div v-if="sec.title" class="variant-product-header">
+              <span class="variant-product-badge">{{ sec.title }}</span>
+            </div>
+            <div class="variant-groups-wrap">
+              <div v-for="(grp, gIdx) in sec.groups" :key="grp.group || gIdx" class="variant-modal-group">
+                <label class="variant-modal-label">
+                  <span>{{ grp.group || 'Varian' }}</span>
+                  <span v-if="grp.required" style="color: #DC2626; margin-left: 3px;">*</span>
+                  <span style="font-weight: 400; color: #78716C; font-size: 0.78rem; margin-left: 6px;">
+                    {{ grp.multiple ? '(Boleh pilih lebih dari satu)' : '(Pilih salah satu)' }}
+                  </span>
+                </label>
+                <div class="variant-pick-list">
+                  <button
+                    v-for="opt in grp.options"
+                    :key="opt.key"
+                    type="button"
+                    class="variant-chip"
+                    :class="{ active: itemVariantsInput.includes(opt.key) }"
+                    @click="selectGroupOption(grp, opt.key)"
+                  >
+                    <span class="variant-check">{{ itemVariantsInput.includes(opt.key) ? (grp.multiple ? '✓' : '●') : '' }}</span>
+                    <span>{{ opt.name }}</span>
+                    <span class="variant-price">{{ opt.price > 0 ? `+${formatRupiah(opt.price)}` : 'Gratis' }}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <p v-if="variantError" style="color: #DC2626; font-size: 0.82rem; font-weight: 700; margin: 0.25rem 0 0;">
@@ -1672,6 +1686,40 @@ function getItemType(item) {
   margin: 0;
 }
 
+.variant-sections-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.variant-product-section {
+  border: 1.5px solid var(--color-primary);
+  padding: 0.65rem 0.75rem;
+  background-color: #FAF9F6;
+}
+
+.variant-product-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed var(--color-primary);
+}
+
+.variant-product-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-cream);
+  background-color: var(--color-primary);
+  padding: 2px 9px;
+}
+
 .variant-modal-group {
   display: flex;
   flex-direction: column;
@@ -1758,7 +1806,41 @@ function getItemType(item) {
     gap: 1.15rem;
   }
 
-  .variant-modal-group {
+  .variant-sections-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.variant-product-section {
+  border: 1.5px solid var(--color-primary);
+  padding: 0.65rem 0.75rem;
+  background-color: #FAF9F6;
+}
+
+.variant-product-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed var(--color-primary);
+}
+
+.variant-product-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-cream);
+  background-color: var(--color-primary);
+  padding: 2px 9px;
+}
+
+.variant-modal-group {
     gap: 0.55rem;
   }
 
