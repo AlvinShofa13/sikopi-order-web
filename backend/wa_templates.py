@@ -125,6 +125,8 @@ def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK) -> str:
             head,
             "",
             f"Pesanan Anda sudah selesai. Terima kasih sudah berkunjung di {brand}!",
+            "",
+            f"Beri rating & ulasan pesanan Anda di sini:\n{order['ratingUrl']}" if order.get("ratingUrl") else None,
         ],
         "Batal": [
             head,

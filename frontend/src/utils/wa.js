@@ -128,8 +128,9 @@ export function orderStatusText(order, status, brandName = DEFAULT_BRAND) {
     Selesai: [
       head,
       '',
-      'Pesanan Anda sudah selesai. Terima kasih sudah maddenii di',
-      `${brand}!`
+      `Pesanan Anda sudah selesai. Terima kasih sudah berkunjung di ${brand}!`,
+      order.ratingUrl ? '' : null,
+      order.ratingUrl ? `Beri rating & ulasan pesanan Anda di sini:\n${order.ratingUrl}` : null
     ],
     Batal: [head, '', 'Mohon maaf, pesanan Anda dibatalkan. Hubungi kasir bila ada pertanyaan.']
   }

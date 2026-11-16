@@ -284,6 +284,24 @@ export const api = {
         body: JSON.stringify(statusData)
       })
     },
+    async getPublicRatings() {
+      return request('/orders/ratings/public', { skipFallback: true })
+    },
+    async getRatings() {
+      return request('/orders/ratings')
+    },
+    async getRatingInfo(orderId, token) {
+      return request(`/orders/${encodeURIComponent(orderId)}/rating?token=${encodeURIComponent(token || '')}`, {
+        skipFallback: true
+      })
+    },
+    async submitRating(orderId, payload) {
+      return request(`/orders/${encodeURIComponent(orderId)}/rating`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        skipFallback: true
+      })
+    },
     async remove(orderId) {
       return request(`/orders/${orderId}`, {
         method: 'DELETE'

@@ -142,6 +142,12 @@ class OrderStatusUpdate(BaseModel):
     cash_change: Optional[float] = None
 
 
+class OrderRatingCreate(BaseModel):
+    token: str
+    rating: int = Field(..., ge=1, le=5)
+    comment: Optional[str] = ""
+
+
 # --- Preorder / Mode Schemas ---
 class ModeSwitchRequest(BaseModel):
     mode: str  # 'pos' (on-site) | 'preorder' (open PO); keduanya tidak bisa aktif bersamaan

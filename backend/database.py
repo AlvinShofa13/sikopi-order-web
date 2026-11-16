@@ -46,6 +46,8 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE orders ADD COLUMN batch_id INTEGER"))
         if "payment_proof" not in cols:
             conn.execute(text("ALTER TABLE orders ADD COLUMN payment_proof TEXT"))
+        if "rating_token" not in cols:
+            conn.execute(text("ALTER TABLE orders ADD COLUMN rating_token VARCHAR(64)"))
         for dead in ("qris_payload", "qris_image_url"):
             if dead in cols:
                 conn.execute(text(f"ALTER TABLE orders DROP COLUMN {dead}"))

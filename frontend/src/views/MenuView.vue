@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, createToast, bundleContentsLabel, bundleSavings, parseVariants, parseMenuVariantSections, variantExtras, variantsLabel } from '@/utils/format'
+import { formatRupiah, createToast, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras, variantGroupTags } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -269,7 +269,15 @@ function goToCart() {
                 <span v-if="item.is_bundle" class="bundle-tag">PAKET</span>
               </h3>
               <p v-if="item.is_bundle" class="bundle-contents-line">Isi: {{ bundleContentsLabel(item.bundle_items, store.menuItems) }}</p>
-              <p v-if="parseVariants(item.variants).length > 0" class="variants-line">Varian: {{ variantsLabel(item.variants) }}</p>
+              <div v-if="variantGroupTags(item, store.menuItems).length > 0" class="variant-group-tags-row">
+                <span
+                  v-for="tag in variantGroupTags(item, store.menuItems)"
+                  :key="tag.label"
+                  class="variant-group-tag"
+                >
+                  {{ tag.label }}
+                </span>
+              </div>
               <p class="item-description">{{ item.description }}</p>
 
               <div class="card-action-bar">
@@ -1394,6 +1402,33 @@ function goToCart() {
   background-color: var(--color-primary);
   padding: 3px 10px;
   border-radius: var(--radius-full);
+}
+
+.variant-group-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0.35rem 0 0.5rem;
+}
+
+.variant-group-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 0.62rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #FFFFFF;
+  background-color: var(--color-peach, #D9886A);
+  border: 1px solid var(--color-primary, #2C4A3E);
+  border-radius: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.variant-group-tag .tag-req {
+  color: #DC2626;
+  margin-left: 2px;
 }
 
 .variant-group-box {

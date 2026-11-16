@@ -38,6 +38,11 @@ const router = createRouter({
       component: () => import('@/views/ConfirmationView.vue')
     },
     {
+      path: '/rating/:id',
+      name: 'rating',
+      component: () => import('@/views/RatingView.vue')
+    },
+    {
       path: '/admin',
       name: 'admin',
       component: () => import('@/views/AdminView.vue')

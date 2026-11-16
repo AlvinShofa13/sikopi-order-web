@@ -226,11 +226,17 @@ const analyticsPayments = computed(() => {
 
 const topMenuMaxQty = computed(() => Math.max(1, ...analyticsTopMenus.value.map(m => m.qty || 0)))
 
+const adminRatings = ref({ average: 0, total: 0, ratings: [] })
+
 async function fetchSalesStats() {
   statsLoading.value = true
   try {
-    const res = await api.orders.getStats()
-    if (res.ok) salesStats.value = res.data
+    const [statsRes, ratingsRes] = await Promise.all([
+      api.orders.getStats(),
+      api.orders.getRatings()
+    ])
+    if (statsRes.ok) salesStats.value = statsRes.data
+    if (ratingsRes.ok && ratingsRes.data) adminRatings.value = ratingsRes.data
   } catch {
     // fallback lokal via computed
   } finally {
@@ -2260,6 +2266,27 @@ async function handleResetBranding() {
                 Paling dipilih: <strong>{{ analyticsPayments[0].label }}</strong>
                 ({{ analyticsPayments[0].count }} transaksi, {{ analyticsPayments[0].pct }}%)
               </p>
+            </div>
+          </div>
+
+          <!-- Ulasan & Rating Pelanggan -->
+          <div class="analytics-card" style="margin-top: 1.25rem;">
+            <h3 class="analytics-card-title">
+              <AppIcon name="sparkles" :size="16" />
+              <span>Rating & Ulasan Pelanggan ({{ adminRatings.total }}) — Rata-rata ★ {{ Number(adminRatings.average || 0).toFixed(1) }} / 5</span>
+            </h3>
+            <div v-if="(adminRatings.ratings || []).length === 0" class="variant-empty">
+              Belum ada rating dari pelanggan. Link rating otomatis dikirim ke WhatsApp saat pesanan berstatus "Selesai".
+            </div>
+            <div v-else class="recap-orders-list">
+              <div v-for="r in adminRatings.ratings" :key="r.id" class="recap-order-row">
+                <div class="recap-order-main">
+                  <strong>{{ r.customerName }}</strong>
+                  <span class="font-mono">{{ r.orderId }}</span>
+                  <span style="color: #F59E0B; font-weight: 800;">{{ '★'.repeat(r.rating) }}{{ '☆'.repeat(5 - r.rating) }} ({{ r.rating }}/5)</span>
+                </div>
+                <div v-if="r.comment" class="recap-order-items">"{{ r.comment }}"</div>
+              </div>
             </div>
           </div>
         </section>

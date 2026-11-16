@@ -5,6 +5,7 @@ import { useOrderStore } from '@/stores/orderStore'
 import HeroSection from '@/components/HeroSection.vue'
 import CaraPesanSection from '@/components/CaraPesanSection.vue'
 import MenuSection from '@/components/MenuSection.vue'
+import RatingMarqueeSection from '@/components/RatingMarqueeSection.vue'
 
 const store = useOrderStore()
 const route = useRoute()
@@ -37,6 +38,9 @@ onMounted(async () => {
 
     <!-- 3. Katalog Inti Terbelah 50/50 + Favorit Carousel + Floating Cart Bar -->
     <MenuSection />
+
+    <!-- 4. Carousel Ulasan & Rating Pelanggan (tampil bila sudah ada rating) -->
+    <RatingMarqueeSection />
   </div>
 </template>
 

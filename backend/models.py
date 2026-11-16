@@ -68,10 +68,27 @@ class Order(Base):
 
     # Order Lifecycle Status
     order_status = Column(String(50), default="Diterima & Disiapkan")
+    rating_token = Column(String(64), nullable=True)
 
     # Relations
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     batch = relationship("PreorderBatch", back_populates="items")
+    rating = relationship("OrderRating", back_populates="order", uselist=False, cascade="all, delete-orphan")
+
+
+class OrderRating(Base):
+    """Rating & ulasan customer per pesanan (1 pesanan = 1 rating)."""
+
+    __tablename__ = "order_ratings"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    order_id = Column(String(50), ForeignKey("orders.order_id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    customer_name = Column(String(150), nullable=False, default="Pelanggan")
+    rating = Column(Integer, nullable=False)
+    comment = Column(Text, default="")
+    created_at = Column(DateTime, default=utc_now)
+
+    order = relationship("Order", back_populates="rating")
 
 
 class OrderItem(Base):

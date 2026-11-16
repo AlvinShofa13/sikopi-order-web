@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import os
 import random
 import re
 import secrets
@@ -12,7 +13,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from auth_dep import client_ip, is_valid_admin_token, prune_fails, record_fail, require_admin
 from database import get_db
-from models import AppSetting, MenuItem, Order, OrderItem, PreorderBatch
+from models import AppSetting, MenuItem, Order, OrderItem, OrderRating, PreorderBatch
 from realtime import order_manager
 from routers.preorder import (
     MODE_POS,
@@ -24,7 +25,7 @@ from routers.preorder import (
     is_ordering_paused,
 )
 from routers.uploads import ORDER_CODE_RE
-from schemas import OrderCreate, OrderStatusUpdate, PosOrderCreate
+from schemas import OrderCreate, OrderRatingCreate, OrderStatusUpdate, PosOrderCreate
 from wa_client import send_wa_text
 from wa_templates import order_created_text, payment_verified_text, status_text
 
@@ -131,6 +132,14 @@ async def websocket_orders_endpoint(
         order_manager.disconnect(websocket)
 
 
+def _rating_url(ord: Order) -> str | None:
+    token = getattr(ord, "rating_token", None)
+    if not token:
+        return None
+    base = (os.getenv("FRONTEND_URL") or "https://sikopi-web.vercel.app").strip().rstrip("/")
+    return f"{base}/rating/{ord.order_id}?token={token}"
+
+
 def serialize_order(ord: Order) -> Dict[str, Any]:
     return {
         "orderId": ord.order_id,
@@ -180,6 +189,113 @@ def serialize_order(ord: Order) -> Dict[str, Any]:
             "total": ord.total,
         },
         "orderStatus": ord.order_status,
+        "ratingUrl": _rating_url(ord),
+    }
+
+
+@router.get("/ratings/public")
+def get_public_ratings(db: Session = Depends(get_db)):
+    """Daftar rating publik untuk carousel di halaman utama."""
+    rows = (
+        db.query(OrderRating)
+        .order_by(OrderRating.created_at.desc())
+        .limit(30)
+        .all()
+    )
+    total = db.query(func.count(OrderRating.id)).scalar() or 0
+    avg_raw = db.query(func.avg(OrderRating.rating)).scalar()
+    average = round(float(avg_raw), 1) if avg_raw is not None else 0.0
+    items = []
+    for r in rows:
+        ord = r.order
+        items_summary = ", ".join(f"{it.quantity}x {it.name}" for it in (ord.items if ord else []))
+        items.append({
+            "id": r.id,
+            "customerName": r.customer_name or "Pelanggan",
+            "rating": int(r.rating),
+            "comment": (r.comment or "").strip(),
+            "itemsSummary": items_summary,
+            "createdAt": _utc_iso(r.created_at) or "",
+        })
+    return {"average": average, "total": int(total), "ratings": items}
+
+
+@router.get("/ratings")
+def get_admin_ratings(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
+    """Daftar seluruh rating pelanggan (Admin)."""
+    rows = db.query(OrderRating).order_by(OrderRating.created_at.desc()).all()
+    total = len(rows)
+    average = round(sum(int(r.rating) for r in rows) / total, 1) if total else 0.0
+    return {
+        "average": average,
+        "total": total,
+        "ratings": [
+            {
+                "id": r.id,
+                "orderId": r.order_id,
+                "customerName": r.customer_name or "Pelanggan",
+                "rating": int(r.rating),
+                "comment": (r.comment or "").strip(),
+                "createdAt": _utc_iso(r.created_at) or "",
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/{order_id}/rating")
+def get_order_rating_page(order_id: str, token: str = Query(...), db: Session = Depends(get_db)):
+    """Cek validitas token rating & ambil ringkasan pesanan untuk halaman rating publik."""
+    ord = db.query(Order).filter(Order.order_id == order_id).first()
+    if not ord or not ord.rating_token or not secrets.compare_digest(ord.rating_token, token.strip()):
+        raise HTTPException(status_code=404, detail="Tautan rating tidak valid atau pesanan tidak ditemukan.")
+    existing = db.query(OrderRating).filter(OrderRating.order_id == order_id).first()
+    return {
+        "orderId": ord.order_id,
+        "customerName": ord.customer_name,
+        "items": [{"name": it.name, "quantity": it.quantity, "notes": it.notes or ""} for it in ord.items],
+        "alreadyRated": bool(existing),
+        "existingRating": (
+            {
+                "rating": int(existing.rating),
+                "comment": existing.comment or "",
+                "createdAt": _utc_iso(existing.created_at) or "",
+            }
+            if existing else None
+        ),
+    }
+
+
+@router.post("/{order_id}/rating", status_code=status.HTTP_201_CREATED)
+def submit_order_rating(order_id: str, payload: OrderRatingCreate, db: Session = Depends(get_db)):
+    """Simpan rating (1-5 bintang) & ulasan customer untuk satu pesanan."""
+    ord = db.query(Order).filter(Order.order_id == order_id).first()
+    if not ord or not ord.rating_token or not secrets.compare_digest(ord.rating_token, (payload.token or "").strip()):
+        raise HTTPException(status_code=404, detail="Tautan rating tidak valid atau pesanan tidak ditemukan.")
+    existing = db.query(OrderRating).filter(OrderRating.order_id == order_id).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Pesanan ini sudah pernah diberi rating. Terima kasih!")
+
+    new_rating = OrderRating(
+        order_id=ord.order_id,
+        customer_name=ord.customer_name or "Pelanggan",
+        rating=int(payload.rating),
+        comment=(payload.comment or "").strip(),
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(new_rating)
+    db.commit()
+    db.refresh(new_rating)
+    return {
+        "success": True,
+        "rating": {
+            "id": new_rating.id,
+            "orderId": new_rating.order_id,
+            "customerName": new_rating.customer_name,
+            "rating": int(new_rating.rating),
+            "comment": new_rating.comment or "",
+            "createdAt": _utc_iso(new_rating.created_at) or "",
+        },
     }
 
 
@@ -645,6 +761,7 @@ async def _persist_new_order(
         tax=0.0,
         total=total,
         order_status="Diterima & Disiapkan",
+        rating_token=secrets.token_urlsafe(16),
     )
     db.add(new_order)
     db.flush()
@@ -849,6 +966,8 @@ async def update_order_status(
 
     if payload.order_status:
         ord.order_status = payload.order_status
+        if payload.order_status == "Selesai" and not ord.rating_token:
+            ord.rating_token = secrets.token_urlsafe(16)
     if payload.cash_received is not None:
         ord.cash_received = payload.cash_received
     if payload.cash_change is not None:

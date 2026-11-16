@@ -60,6 +60,17 @@ function digits(raw) {
   return String(raw || '').replace(/\D/g, '').replace(/^0/, '')
 }
 
+const silentLogger = {
+  level: 'silent',
+  trace() {},
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+  fatal() {},
+  child() { return this }
+}
+
 async function connect() {
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
   const { version } = await fetchLatestBaileysVersion()
@@ -67,6 +78,7 @@ async function connect() {
   sock = makeWASocket({
     version,
     auth: state,
+    logger: silentLogger,
     printQRInTerminal: false,
     browser: ['SIKopi Gateway', 'Chrome', '1.0']
   })

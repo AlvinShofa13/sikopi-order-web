@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, parseVariants, parseMenuVariantSections, variantExtras, variantsLabel, bundleContentsLabel, bundleSavings } from '@/utils/format'
+import { formatRupiah, parseMenuVariantSections, variantExtras, variantGroupTags, bundleContentsLabel, bundleSavings } from '@/utils/format'
 
 const router = useRouter()
 const store = useOrderStore()
@@ -237,7 +237,6 @@ function getItemType(item) {
       <div class="container favorit-container">
         <div class="favorit-header">
           <h2 class="heading-display favorit-title">MENU FAVORIT</h2>
-          <span class="favorit-hint font-mono">&lsaquo;&lsaquo; GESER UNTUK LIHAT LAINNYA &rsaquo;&rsaquo;</span>
         </div>
 
         <div class="favorit-carousel">
@@ -570,7 +569,15 @@ function getItemType(item) {
                     </span>
                   </div>
                   <p v-if="item.is_bundle" class="item-bundle-contents">Isi: {{ bundleContentsLabel(item.bundle_items, store.menuItems) }}</p>
-                  <p v-if="parseVariants(item.variants).length > 0" class="item-variants-line">Varian: {{ variantsLabel(item.variants) }}</p>
+                  <div v-if="variantGroupTags(item, store.menuItems).length > 0" class="variant-group-tags-row">
+                    <span
+                      v-for="tag in variantGroupTags(item, store.menuItems)"
+                      :key="tag.label"
+                      class="variant-group-tag font-mono"
+                    >
+                      {{ tag.label }}
+                    </span>
+                  </div>
                   <div class="item-dashed-line"></div>
                   <div class="item-footer-row">
                     <span class="item-price font-mono">{{ formatRupiah(item.price) }}</span>
@@ -1720,6 +1727,33 @@ function getItemType(item) {
   padding: 2px 9px;
 }
 
+.variant-group-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 4px 0 6px;
+}
+
+.variant-group-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-size: 0.58rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #FFFFFF;
+  background-color: var(--color-peach, #D9886A);
+  border: 1px solid var(--color-primary, #2C4A3E);
+  border-radius: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.variant-group-tag .tag-req {
+  color: #DC2626;
+  margin-left: 2px;
+}
+
 .variant-modal-group {
   display: flex;
   flex-direction: column;
@@ -1838,6 +1872,33 @@ function getItemType(item) {
   color: var(--color-cream);
   background-color: var(--color-primary);
   padding: 2px 9px;
+}
+
+.variant-group-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 4px 0 6px;
+}
+
+.variant-group-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-size: 0.58rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #FFFFFF;
+  background-color: var(--color-peach, #D9886A);
+  border: 1px solid var(--color-primary, #2C4A3E);
+  border-radius: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.variant-group-tag .tag-req {
+  color: #DC2626;
+  margin-left: 2px;
 }
 
 .variant-modal-group {

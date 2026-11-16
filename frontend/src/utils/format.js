@@ -174,6 +174,23 @@ export function parseMenuVariantSections(menuItem, allMenuItems = []) {
   return sections
 }
 
+// Daftar nama kelompok varian saja (untuk badge kotak pada list produk utama).
+// -> [{ label, required }]
+export function variantGroupTags(menuItem, allMenuItems = []) {
+  const sections = parseMenuVariantSections(menuItem, allMenuItems)
+  const seen = new Set()
+  const tags = []
+  for (const sec of sections) {
+    for (const g of sec.groups) {
+      const label = (g.group || '').trim() || 'Varian'
+      if (seen.has(label)) continue
+      seen.add(label)
+      tags.push({ label, required: Boolean(g.required) })
+    }
+  }
+  return tags
+}
+
 // Total biaya tambahan varian terpilih (harga dari daftar resmi menu & isi paket bundel).
 export function variantExtras(menuItem, selectedNames = [], allMenuItems = []) {
   const sections = parseMenuVariantSections(menuItem, allMenuItems)

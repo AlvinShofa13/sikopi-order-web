@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras } from '@/utils/format'
+import { formatRupiah, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras, variantGroupTags } from '@/utils/format'
 import { generateQrisDataUrl } from '@/utils/qris'
 import { isBluetoothSupported, printReceiptViaBluetooth } from '@/utils/bluetoothPrinter'
 import AppIcon from '@/components/icons/AppIcon.vue'
@@ -254,6 +254,15 @@ function startNewOrder() {
             <span v-if="m.is_bundle" class="pos-bundle-tag">PAKET</span>
           </span>
           <span v-if="m.is_bundle" class="pos-bundle-contents">{{ bundleContentsLabel(m.bundle_items, store.menuItems) }}</span>
+          <div v-if="variantGroupTags(m, store.menuItems).length > 0" class="pos-group-tags-row">
+            <span
+              v-for="tag in variantGroupTags(m, store.menuItems)"
+              :key="tag.label"
+              class="pos-group-tag"
+            >
+              {{ tag.label }}
+            </span>
+          </div>
           <span class="pos-menu-price font-mono">{{ formatRupiah(m.price) }}</span>
           <template v-if="m.is_bundle && bundleSaveInfo(m).savings > 0">
             <span class="pos-price-was font-mono">{{ formatRupiah(bundleSaveInfo(m).sum) }}</span>
@@ -556,6 +565,25 @@ function startNewOrder() {
   font-size: 0.72rem;
   color: var(--color-text-muted);
   line-height: 1.4;
+}
+.pos-group-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0;
+}
+.pos-group-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 0.56rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #FFFFFF;
+  background-color: var(--color-peach, #D9886A);
+  border: 1px solid var(--color-primary, #2C4A3E);
+  border-radius: 0;
+  pointer-events: none;
+  user-select: none;
 }
 .pos-menu-price { font-size: 0.8rem; color: var(--color-primary); font-weight: 700; }
 .pos-price-was {
