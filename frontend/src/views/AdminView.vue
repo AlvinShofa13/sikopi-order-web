@@ -4332,7 +4332,7 @@ async function handleResetBranding() {
 }
 
 .btn-act.btn-print {
-  background-color: var(--color-charcoal);
+  background-color: #1C1917;
   color: #FFFFFF;
 }
 
