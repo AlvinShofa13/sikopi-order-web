@@ -228,6 +228,30 @@ const topMenuMaxQty = computed(() => Math.max(1, ...analyticsTopMenus.value.map(
 
 const adminRatings = ref({ average: 0, total: 0, ratings: [] })
 
+function parseOrderItemNotes(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return { variants: [], note: '' }
+
+  // Tangkap blok [Varian: ...] meski di dalamnya terdapat kurung siku [Nama Produk]
+  const match = text.match(/\[Varian:\s*(.+?)\](?=\s*(?:\[|$))/)
+  let variants = []
+  let rest = text
+  if (match) {
+    rest = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).trim()
+    const inner = match[1].replace(/\s*\(\+Rp[\d.]+\)\s*$/, '').trim()
+    variants = inner
+      .split(',')
+      .map((part) => {
+        let s = part.trim().replace(/^\[[^\]]+\]\s*/, '')
+        const colonIdx = s.indexOf(':')
+        if (colonIdx !== -1) s = s.slice(colonIdx + 1).trim()
+        return s
+      })
+      .filter(Boolean)
+  }
+  return { variants, note: rest }
+}
+
 async function fetchSalesStats() {
   statsLoading.value = true
   try {
@@ -2994,7 +3018,18 @@ async function handleResetBranding() {
               <div v-for="it in selectedOrder.items" :key="it.id || it.name" class="detail-item-row">
                 <div class="item-name-col">
                   <strong>{{ it.name }}</strong>
-                  <span v-if="it.notes" class="item-notes">Catatan: {{ it.notes }}</span>
+                  <div v-if="parseOrderItemNotes(it.notes).variants.length > 0" class="detail-variant-badges">
+                    <span
+                      v-for="(v, vIdx) in parseOrderItemNotes(it.notes).variants"
+                      :key="vIdx"
+                      class="detail-variant-badge font-mono"
+                    >
+                      {{ v }}
+                    </span>
+                  </div>
+                  <span v-if="parseOrderItemNotes(it.notes).note" class="item-notes">
+                    Catatan: {{ parseOrderItemNotes(it.notes).note }}
+                  </span>
                 </div>
                 <div class="item-qty-col font-mono">x{{ it.quantity }}</div>
                 <div class="item-price-col font-mono">{{ formatRupiah(it.price * it.quantity) }}</div>
@@ -7655,5 +7690,25 @@ async function handleResetBranding() {
   font-size: 0.82rem;
   font-weight: 700;
   margin-top: 0.2rem;
+}
+
+.detail-variant-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+}
+
+.detail-variant-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #FFFFFF;
+  background-color: var(--color-peach, #D9886A);
+  border: 1px solid var(--color-primary, #2C4A3E);
+  border-radius: 0;
 }
 </style>
