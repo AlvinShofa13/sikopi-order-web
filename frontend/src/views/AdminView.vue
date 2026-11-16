@@ -4332,12 +4332,15 @@ async function handleResetBranding() {
 }
 
 .btn-act.btn-print {
-  background-color: #1C1917;
-  color: #FFFFFF;
+  background-color: #F5F5F4;
+  color: #1C1917;
+  border: 1px solid #D6D3D1;
 }
 
 .btn-act.btn-print:hover {
-  background-color: #292524;
+  background-color: #1C1917;
+  color: #FFFFFF;
+  border-color: #1C1917;
 }
 
 .btn-act:disabled {
