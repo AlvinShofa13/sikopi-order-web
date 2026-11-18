@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, createToast, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras, variantGroupTags } from '@/utils/format'
+import { formatRupiah, formatVariantDelta, createToast, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras, variantGroupTags } from '@/utils/format'
 import AppIcon from '@/components/icons/AppIcon.vue'
 
 const router = useRouter()
@@ -400,15 +400,15 @@ function goToCart() {
                           {{ itemVariantsInput.includes(opt.key) ? (grp.multiple ? '✓' : '●') : '' }}
                         </span>
                         <span>{{ opt.name }}</span>
-                        <span class="variant-price">{{ opt.price > 0 ? `+${formatRupiah(opt.price)}` : 'Gratis' }}</span>
+                        <span class="variant-price">{{ formatVariantDelta(opt.price) }}</span>
                       </button>
                     </div>
                   </div>
                 </div>
               </div>
               <p v-if="variantError" class="variant-error-msg">{{ variantError }}</p>
-              <p v-if="modalVariantExtra() > 0" class="form-hint">
-                Total tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
+              <p v-if="modalVariantExtra() !== 0" class="form-hint">
+                Penyesuaian varian: {{ formatVariantDelta(modalVariantExtra()) }} per porsi.
               </p>
             </div>
 

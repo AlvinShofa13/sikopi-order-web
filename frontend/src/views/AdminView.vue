@@ -3256,7 +3256,7 @@ async function handleResetBranding() {
                 <div class="variant-options-list">
                   <div v-for="(opt, oIdx) in (grp.options || [])" :key="oIdx" class="variant-edit-row">
                     <input v-model="opt.name" type="text" placeholder="Nama pilihan (mis. Arabica)" class="form-input" />
-                    <input v-model.number="opt.price" type="number" min="0" step="500" placeholder="Biaya (0 = gratis)" class="form-input font-mono" />
+                    <input v-model.number="opt.price" type="number" step="500" placeholder="Biaya (+/-, 0 = gratis)" class="form-input font-mono" />
                     <button type="button" class="btn-preview-action btn-remove" @click="removeGroupOption(gIdx, oIdx)" title="Hapus pilihan">
                       <AppIcon name="close" :size="13" />
                     </button>

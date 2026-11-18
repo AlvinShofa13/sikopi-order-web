@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras, variantGroupTags } from '@/utils/format'
+import { formatRupiah, formatVariantDelta, bundleContentsLabel, bundleSavings, parseMenuVariantSections, variantExtras, variantGroupTags } from '@/utils/format'
 import { generateQrisDataUrl } from '@/utils/qris'
 import { isBluetoothSupported, printReceiptViaBluetooth } from '@/utils/bluetoothPrinter'
 import AppIcon from '@/components/icons/AppIcon.vue'
@@ -54,7 +54,7 @@ function posLineExtras(line) {
 }
 
 function posLineTotal(line) {
-  return (Number(line.price || 0) + posLineExtras(line)) * Number(line.qty || 0)
+  return Math.max(0, Number(line.price || 0) + posLineExtras(line)) * Number(line.qty || 0)
 }
 
 function posCartQty(menuId) {
@@ -394,7 +394,7 @@ function startNewOrder() {
                         @click="selectPosGroupOption(l, grp, opt.key)"
                       >
                         <span class="pos-var-check">{{ l.variants.includes(opt.key) ? '✓' : '' }}</span>
-                        <span>{{ opt.name }}{{ opt.price > 0 ? ` +${formatRupiah(opt.price)}` : '' }}</span>
+                        <span>{{ opt.name }}{{ opt.price !== 0 ? ` (${formatVariantDelta(opt.price)})` : '' }}</span>
                       </button>
                     </div>
                   </div>

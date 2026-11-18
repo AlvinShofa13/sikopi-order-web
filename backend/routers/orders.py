@@ -675,19 +675,22 @@ def _price_with_breakdown(db: Session, items, *, require_variants: bool = True) 
                 status_code=422,
                 detail=f"Menu '{it.name}' sudah tidak tersedia. Muat ulang halaman menu.",
             )
-        line_total = float(menu_item.price) * int(it.quantity)
-        subtotal += line_total
         # Snapshot isi paket pada catatan baris (dapur/kasir tahu komposisi
         # paket walau paket diubah/dihapus kemudian).
         bundle_label = _bundle_contents_label(db, menu_item)
-        # Varian: harga ekstra selalu dari server (abaikan harga client).
+        # Varian: harga ekstra/diskon selalu dari server (abaikan harga client).
         variant_names, variant_extra = _resolve_variant_extras(db, menu_item, it.variants, require_variants=require_variants)
-        if variant_extra:
-            line_total += variant_extra * int(it.quantity)
-            subtotal += variant_extra * int(it.quantity)
+        unit_price = max(0.0, float(menu_item.price) + variant_extra)
+        line_total = unit_price * int(it.quantity)
+        subtotal += line_total
         note = (it.notes or "").strip()
         if variant_names:
-            extra_tag = f" (+{_rp(variant_extra)})" if variant_extra else ""
+            if variant_extra > 0:
+                extra_tag = f" (+{_rp(variant_extra)})"
+            elif variant_extra < 0:
+                extra_tag = f" (-{_rp(abs(variant_extra))})"
+            else:
+                extra_tag = ""
             variant_tag = f"[Varian: {', '.join(variant_names)}{extra_tag}]"
             note = f"{note} {variant_tag}".strip() if note else variant_tag
         if bundle_label:
@@ -695,7 +698,7 @@ def _price_with_breakdown(db: Session, items, *, require_variants: bool = True) 
         items_data.append({
             "menu_item_id": menu_item.id,
             "name": menu_item.name,
-            "price": float(menu_item.price) + variant_extra,
+            "price": unit_price,
             "quantity": int(it.quantity),
             "notes": note,
             "subtotal": line_total,

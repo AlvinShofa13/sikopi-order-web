@@ -288,11 +288,11 @@ export const useOrderStore = defineStore('order', () => {
     return menuItems.value.find((m) => m.id === id)
   }
 
-  // Total satu baris = (harga satuan + ekstra varian) x jumlah.
+  // Total satu baris = max(0, harga satuan + ekstra/potongan varian) x jumlah.
   function lineTotal(line) {
     const menu = menuById(line.id)
     const extra = menu ? variantExtras(menu, line.variants, menuItems.value) : 0
-    return (Number(line.price || 0) + extra) * Number(line.quantity || 0)
+    return Math.max(0, Number(line.price || 0) + extra) * Number(line.quantity || 0)
   }
 
   const cartCount = computed(() => cart.value.reduce((total, item) => total + item.quantity, 0))

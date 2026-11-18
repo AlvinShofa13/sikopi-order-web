@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOrderStore } from '@/stores/orderStore'
 import { api } from '@/services/api'
-import { formatRupiah, parseMenuVariantSections, variantExtras, variantGroupTags, bundleContentsLabel, bundleSavings } from '@/utils/format'
+import { formatRupiah, formatVariantDelta, parseMenuVariantSections, variantExtras, variantGroupTags, bundleContentsLabel, bundleSavings } from '@/utils/format'
 
 const router = useRouter()
 const store = useOrderStore()
@@ -675,7 +675,7 @@ function getItemType(item) {
                   >
                     <span class="variant-check">{{ itemVariantsInput.includes(opt.key) ? (grp.multiple ? '✓' : '●') : '' }}</span>
                     <span>{{ opt.name }}</span>
-                    <span class="variant-price">{{ opt.price > 0 ? `+${formatRupiah(opt.price)}` : 'Gratis' }}</span>
+                    <span class="variant-price">{{ formatVariantDelta(opt.price) }}</span>
                   </button>
                 </div>
               </div>
@@ -684,8 +684,8 @@ function getItemType(item) {
           <p v-if="variantError" style="color: #DC2626; font-size: 0.82rem; font-weight: 700; margin: 0.25rem 0 0;">
             {{ variantError }}
           </p>
-          <p v-if="modalVariantExtra() > 0" class="variant-modal-hint">
-            Total tambahan varian: {{ formatRupiah(modalVariantExtra()) }} per porsi.
+          <p v-if="modalVariantExtra() !== 0" class="variant-modal-hint">
+            Penyesuaian varian: {{ formatVariantDelta(modalVariantExtra()) }} per porsi.
           </p>
         </div>
 

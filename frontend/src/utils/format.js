@@ -123,13 +123,21 @@ export function parseVariants(raw) {
   )
 }
 
+// Format selisih biaya varian: "+Rp 2.000", "-Rp 2.000", atau "Gratis".
+export function formatVariantDelta(price) {
+  const n = Number(price || 0) || 0
+  if (n > 0) return `+${formatRupiah(n)}`
+  if (n < 0) return formatRupiah(n)
+  return 'Gratis'
+}
+
 // Label ringkas varian untuk kartu menu.
 export function variantsLabel(variantsRaw) {
   const groups = parseVariantGroups(variantsRaw)
   if (groups.length === 0) return ''
   if (groups.length === 1 && !groups[0].group) {
     return groups[0].options
-      .map((v) => (v.price > 0 ? `${v.name} (+${formatRupiah(v.price)})` : `${v.name} (Gratis)`))
+      .map((v) => `${v.name} (${formatVariantDelta(v.price)})`)
       .join(', ')
   }
   return groups

@@ -57,8 +57,6 @@ def _normalize_option(opt: dict, seen_names: set, context: str = "") -> dict:
         raise HTTPException(status_code=422, detail=f"Biaya varian '{name}' tidak valid.")
     if not name:
         raise HTTPException(status_code=422, detail=f"Nama opsi varian {context}wajib diisi.")
-    if price < 0:
-        raise HTTPException(status_code=422, detail=f"Biaya varian '{name}' tidak boleh negatif.")
     if name in seen_names:
         raise HTTPException(status_code=422, detail=f"Varian '{name}' {context}duplikat.")
     seen_names.add(name)
