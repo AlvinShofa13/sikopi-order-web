@@ -150,6 +150,7 @@ async function submitCashOrder() {
       'success'
     )
     resetPosForm()
+    store.fetchMenuFromAPI()
   } catch (err) {
     props.showToast(err.message || 'Gagal mencatat pesanan.', 'error')
   } finally {
@@ -264,6 +265,12 @@ function startNewOrder() {
             </span>
           </div>
           <span class="pos-menu-price font-mono">{{ formatRupiah(m.price) }}</span>
+          <span
+            v-if="m.effective_stock !== null && m.effective_stock !== undefined"
+            class="pos-stock-pill font-mono"
+          >
+            Sisa: {{ m.effective_stock }}
+          </span>
           <template v-if="m.is_bundle && bundleSaveInfo(m).savings > 0">
             <span class="pos-price-was font-mono">{{ formatRupiah(bundleSaveInfo(m).sum) }}</span>
             <span class="pos-save-pill">Hemat {{ formatRupiah(bundleSaveInfo(m).savings) }}</span>

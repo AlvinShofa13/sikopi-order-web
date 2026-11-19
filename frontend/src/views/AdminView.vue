@@ -772,6 +772,7 @@ function openAddMenuModal() {
     price: 1,
     image: 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=700&auto=format&fit=crop&q=80',
     is_available: true,
+    stock: null,
     is_bundle: false,
     bundle_items: [],
     variants: []
@@ -796,6 +797,7 @@ function openEditMenuModal(item) {
     price: item.price,
     image: item.image,
     is_available: item.is_available !== false,
+    stock: item.stock ?? null,
     is_bundle: item.is_bundle === true,
     bundle_items: parseBundleItems(item.bundle_items),
     variants: parseVariantGroups(item.variants).map((g) => ({
@@ -2041,7 +2043,9 @@ async function handleResetBranding() {
                   class="stock-status-pill"
                   :class="item.is_available !== false ? 'available' : 'empty'"
                 >
-                  {{ item.is_available !== false ? 'Tersedia' : 'Habis' }}
+                  {{ item.is_available !== false
+                    ? (item.effective_stock !== null && item.effective_stock !== undefined ? `Stok: ${item.effective_stock}` : 'Tersedia')
+                    : 'Habis' }}
                 </span>
               </div>
 
@@ -3175,6 +3179,19 @@ async function handleResetBranding() {
                   <option :value="false">Habis (Abu-abu / Tidak Bisa Diklik)</option>
                 </select>
               </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="menu-stock">Stok (Opsional — kosongkan jika tanpa batas stok)</label>
+              <input
+                id="menu-stock"
+                v-model="menuForm.stock"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="Kosong = tanpa batas stok (mis. isi 10 untuk batasi 10 porsi)"
+                class="form-input font-mono"
+              />
             </div>
 
             <div class="form-group">

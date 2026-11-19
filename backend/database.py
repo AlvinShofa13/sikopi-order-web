@@ -60,6 +60,8 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE menu_items ADD COLUMN bundle_items TEXT"))
         if "variants" not in menu_cols:
             conn.execute(text("ALTER TABLE menu_items ADD COLUMN variants TEXT"))
+        if "stock" not in menu_cols:
+            conn.execute(text("ALTER TABLE menu_items ADD COLUMN stock INTEGER"))
 
         # Keterangan / lokasi pengambilan pada batch Open PO
         batch_cols = [r[1] for r in conn.execute(text("PRAGMA table_info(preorder_batches)")).fetchall()]

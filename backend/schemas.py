@@ -48,6 +48,7 @@ class MenuItemBase(BaseModel):
     price: float = 1.0
     image: Optional[str] = ""
     is_available: bool = True
+    stock: Optional[int] = None
     is_bundle: bool = False
     # JSON string '[{"id": "menu-x", "quantity": 2}]'; hanya dipakai bila is_bundle.
     bundle_items: Optional[str] = None
@@ -66,6 +67,7 @@ class MenuItemUpdate(BaseModel):
     price: Optional[float] = None
     image: Optional[str] = None
     is_available: Optional[bool] = None
+    stock: Optional[int] = None
     is_bundle: Optional[bool] = None
     bundle_items: Optional[str] = None
     variants: Optional[str] = None
@@ -74,6 +76,7 @@ class MenuItemUpdate(BaseModel):
 class MenuItemResponse(MenuItemBase):
     id: str
     total_sold: int = 0
+    effective_stock: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

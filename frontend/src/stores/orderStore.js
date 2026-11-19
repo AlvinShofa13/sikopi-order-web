@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api } from '@/services/api'
 import { compressImage } from '@/utils/imageUpload'
-import { variantExtras } from '@/utils/format'
+import { variantExtras, parseBundleItems } from '@/utils/format'
 
 /**
  * Dinamis memperbarui ikon tab browser (favicon) sesuai konfigurasi admin SIKopi
@@ -123,6 +123,10 @@ export const useOrderStore = defineStore('order', () => {
         price: Number(item.price) || 1,
         image: item.image || '',
         is_available: item.is_available !== false,
+        stock: item.stock !== null && item.stock !== undefined ? Number(item.stock) : null,
+        effective_stock: item.effective_stock !== null && item.effective_stock !== undefined
+          ? Number(item.effective_stock)
+          : (item.stock !== null && item.stock !== undefined ? Number(item.stock) : null),
         is_bundle: item.is_bundle === true,
         bundle_items: typeof item.bundle_items === 'string' ? item.bundle_items : '',
         variants: typeof item.variants === 'string' ? item.variants : '',
@@ -131,12 +135,19 @@ export const useOrderStore = defineStore('order', () => {
     }
   }
 
+  function normalizeStockInput(raw) {
+    if (raw === '' || raw === null || raw === undefined) return null
+    const n = Number(raw)
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null
+  }
+
   async function toggleMenuAvailability(menuId) {
     const item = menuItems.value.find((m) => m.id === menuId)
     if (item) {
       item.is_available = !item.is_available
     }
-    api.menu.toggle(menuId)
+    await api.menu.toggle(menuId)
+    await fetchMenuFromAPI()
     broadcastChange('MENU_UPDATED', { menuId })
   }
 
@@ -149,6 +160,7 @@ export const useOrderStore = defineStore('order', () => {
       price: Number(newItemData.price) || 1,
       image: newItemData.image || '',
       is_available: newItemData.is_available !== false,
+      stock: normalizeStockInput(newItemData.stock),
       is_bundle: newItemData.is_bundle === true,
       bundle_items: serializeBundleItems(newItemData.bundle_items),
       variants: serializeVariants(newItemData.variants),
@@ -158,7 +170,7 @@ export const useOrderStore = defineStore('order', () => {
     if (!res.ok) {
       throw new Error(res.error || 'Gagal menyimpan menu ke database.')
     }
-    menuItems.value.push(item)
+    await fetchMenuFromAPI()
     broadcastChange('MENU_UPDATED', { menuId: item.id })
     return item
   }
@@ -172,18 +184,19 @@ export const useOrderStore = defineStore('order', () => {
       const variantsStr = 'variants' in updatedData
         ? serializeVariants(updatedData.variants)
         : menuItems.value[idx].variants
-      const updatedItem = {
-        ...menuItems.value[idx],
+      const stockVal = 'stock' in updatedData
+        ? normalizeStockInput(updatedData.stock)
+        : menuItems.value[idx].stock
+      const res = await api.menu.update(id, {
         ...updatedData,
-        price: Number(updatedData.price) || menuItems.value[idx].price,
+        stock: stockVal,
         bundle_items: bundleStr,
         variants: variantsStr
-      }
-      const res = await api.menu.update(id, { ...updatedData, bundle_items: bundleStr, variants: variantsStr })
+      })
       if (!res.ok) {
         throw new Error(res.error || 'Gagal memperbarui menu di database.')
       }
-      menuItems.value[idx] = updatedItem
+      await fetchMenuFromAPI()
       broadcastChange('MENU_UPDATED', { menuId: id })
     }
   }
@@ -307,9 +320,45 @@ export const useOrderStore = defineStore('order', () => {
   const tax = computed(() => 0)
   const grandTotal = computed(() => subtotal.value)
 
+  function cartUsedDemands() {
+    const used = new Map()
+    for (const line of cart.value) {
+      const qty = Number(line.quantity || 0)
+      if (qty <= 0) continue
+      used.set(line.id, (used.get(line.id) || 0) + qty)
+      const m = menuById(line.id)
+      if (m?.is_bundle && m.bundle_items) {
+        for (const comp of parseBundleItems(m.bundle_items)) {
+          used.set(comp.id, (used.get(comp.id) || 0) + comp.quantity * qty)
+        }
+      }
+    }
+    return used
+  }
+
+  function canAddToCart(item) {
+    if (!item || item.is_available === false) return false
+    const target = menuById(item.id) || item
+    if (target.is_available === false) return false
+    const used = cartUsedDemands()
+    if (target.stock !== null && target.stock !== undefined) {
+      if ((used.get(target.id) || 0) + 1 > Number(target.stock)) return false
+    }
+    if (target.is_bundle && target.bundle_items) {
+      for (const comp of parseBundleItems(target.bundle_items)) {
+        const cm = menuById(comp.id)
+        if (!cm || cm.is_available === false) return false
+        if (cm.stock !== null && cm.stock !== undefined) {
+          if ((used.get(cm.id) || 0) + comp.quantity > Number(cm.stock)) return false
+        }
+      }
+    }
+    return true
+  }
+
   function addToCart(item, notes = '', variants = []) {
-    if (item.is_available === false) {
-      return // item habis tidak bisa ditambahkan
+    if (!canAddToCart(item)) {
+      return false
     }
     const picked = [...(variants || [])].map((v) => String(v)).sort()
     const key = cartLineKey(item.id, picked)
@@ -335,11 +384,16 @@ export const useOrderStore = defineStore('order', () => {
       })
     }
     persistCart()
+    return true
   }
 
   function updateQuantity(idOrKey, change) {
     const item = findCartLine(idOrKey)
-    if (!item) return
+    if (!item) return false
+    if (change > 0) {
+      const menu = menuById(item.id) || item
+      if (!canAddToCart(menu)) return false
+    }
 
     const newQty = item.quantity + change
     if (newQty <= 0) {
@@ -348,6 +402,7 @@ export const useOrderStore = defineStore('order', () => {
       item.quantity = newQty
       persistCart()
     }
+    return true
   }
 
   function updateItemNotes(idOrKey, notes) {
@@ -789,6 +844,7 @@ export const useOrderStore = defineStore('order', () => {
     renameCategory,
     deleteCategory,
     addToCart,
+    canAddToCart,
     updateQuantity,
     updateItemNotes,
     removeFromCart,

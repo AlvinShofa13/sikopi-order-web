@@ -581,6 +581,13 @@ function getItemType(item) {
                   <div class="item-dashed-line"></div>
                   <div class="item-footer-row">
                     <span class="item-price font-mono">{{ formatRupiah(item.price) }}</span>
+                    <span
+                      v-if="item.is_available !== false && item.effective_stock !== null && item.effective_stock !== undefined"
+                      class="save-pill"
+                      style="background-color: #EEF2F0; color: var(--color-primary);"
+                    >
+                      Sisa {{ item.effective_stock }}
+                    </span>
                     <span v-if="item.is_bundle && bundleSaveInfo(item).savings > 0" class="save-pill">Hemat {{ formatRupiah(bundleSaveInfo(item).savings) }}</span>
 
                     <!-- Stepper or Add button -->

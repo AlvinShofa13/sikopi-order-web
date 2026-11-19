@@ -115,9 +115,74 @@ def _normalize_variants(variants) -> str | None:
     return json.dumps(normalized) if normalized else None
 
 
+def _normalize_stock(stock) -> int | None:
+    """Normalisasi stok opsional: None = tanpa batas; >= 0 = stok terukur."""
+    if stock is None or stock == "":
+        return None
+    try:
+        val = int(stock)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="Stok menu harus berupa angka bulat.")
+    if val < 0:
+        raise HTTPException(status_code=422, detail="Stok menu tidak boleh negatif.")
+    return val
+
+
+def _compute_effective_availability(item: MenuItem, by_id: dict[str, MenuItem]) -> tuple[bool, int | None]:
+    """Hitung ketersediaan & stok efektif menu (untuk paket, memperhitungkan stok/status setiap komponen)."""
+    avail = bool(item.is_available)
+    eff_stock = item.stock
+    if eff_stock is not None and eff_stock <= 0:
+        avail = False
+
+    if item.is_bundle and item.bundle_items:
+        try:
+            lines = json.loads(item.bundle_items)
+        except (ValueError, TypeError):
+            lines = []
+        for line in lines if isinstance(lines, list) else []:
+            if not isinstance(line, dict):
+                continue
+            comp_id = (line.get("id") or "").strip()
+            qty = int(line.get("quantity") or 0)
+            if not comp_id or qty <= 0:
+                continue
+            comp = by_id.get(comp_id)
+            if not comp or not comp.is_available:
+                avail = False
+                eff_stock = 0 if eff_stock is None else min(eff_stock, 0)
+            elif comp.stock is not None:
+                possible = int(comp.stock) // qty
+                if possible <= 0:
+                    avail = False
+                eff_stock = possible if eff_stock is None else min(eff_stock, possible)
+    return avail, eff_stock
+
+
+def _serialize_menu_item(item: MenuItem, by_id: dict[str, MenuItem], total_sold: int = 0) -> dict:
+    eff_avail, eff_stock = _compute_effective_availability(item, by_id)
+    return {
+        "id": item.id,
+        "name": item.name,
+        "category": item.category,
+        "description": item.description,
+        "price": item.price,
+        "image": item.image,
+        "is_available": eff_avail,
+        "stock": item.stock,
+        "effective_stock": eff_stock,
+        "is_bundle": bool(item.is_bundle),
+        "bundle_items": item.bundle_items,
+        "variants": item.variants,
+        "total_sold": int(total_sold or 0),
+        "created_at": item.created_at,
+        "updated_at": item.updated_at,
+    }
+
+
 @router.get("", response_model=List[MenuItemResponse])
 def get_all_menu(db: Session = Depends(get_db)):
-    """Retrieve all menu items with aggregated total_sold count."""
+    """Retrieve all menu items with aggregated total_sold count and bundle-aware stock."""
     sales_data = (
         db.query(OrderItem.menu_item_id, func.coalesce(func.sum(OrderItem.quantity), 0))
         .filter(OrderItem.menu_item_id.isnot(None))
@@ -127,14 +192,13 @@ def get_all_menu(db: Session = Depends(get_db)):
     sales_map = {item_id: int(qty) for item_id, qty in sales_data if item_id}
 
     items = db.query(MenuItem).order_by(MenuItem.created_at.asc()).all()
-    for item in items:
-        setattr(item, "total_sold", sales_map.get(item.id, 0))
-    return items
+    by_id = {m.id: m for m in items}
+    return [_serialize_menu_item(item, by_id, sales_map.get(item.id, 0)) for item in items]
 
 
 @router.get("/{menu_id}", response_model=MenuItemResponse)
 def get_menu_by_id(menu_id: str, db: Session = Depends(get_db)):
-    """Retrieve single menu item by ID with total_sold count."""
+    """Retrieve single menu item by ID with total_sold count and bundle-aware stock."""
     item = db.query(MenuItem).filter(MenuItem.id == menu_id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Menu tidak ditemukan.")
@@ -143,8 +207,9 @@ def get_menu_by_id(menu_id: str, db: Session = Depends(get_db)):
         .filter(OrderItem.menu_item_id == menu_id)
         .scalar()
     )
-    setattr(item, "total_sold", int(sold or 0))
-    return item
+    all_items = db.query(MenuItem).all()
+    by_id = {m.id: m for m in all_items}
+    return _serialize_menu_item(item, by_id, int(sold or 0))
 
 
 @router.post("/upload")
@@ -171,6 +236,7 @@ def create_menu_item(payload: MenuItemCreate, db: Session = Depends(get_db), _ad
         price=payload.price,
         image=payload.image or "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=700&auto=format&fit=crop&q=80",
         is_available=payload.is_available,
+        stock=_normalize_stock(payload.stock),
         is_bundle=bool(payload.is_bundle),
         bundle_items=_normalize_bundle(payload.is_bundle, payload.bundle_items, db, self_id=item_id),
         variants=_normalize_variants(payload.variants),
@@ -178,7 +244,8 @@ def create_menu_item(payload: MenuItemCreate, db: Session = Depends(get_db), _ad
     db.add(new_item)
     db.commit()
     db.refresh(new_item)
-    return new_item
+    by_id = {m.id: m for m in db.query(MenuItem).all()}
+    return _serialize_menu_item(new_item, by_id, 0)
 
 
 @router.put("/{menu_id}", response_model=MenuItemResponse)
@@ -197,12 +264,15 @@ def update_menu_item(menu_id: str, payload: MenuItemUpdate, db: Session = Depend
         update_data["bundle_items"] = normalized
     if "variants" in update_data:
         update_data["variants"] = _normalize_variants(update_data.get("variants"))
+    if "stock" in update_data:
+        update_data["stock"] = _normalize_stock(update_data.get("stock"))
     for key, value in update_data.items():
         setattr(item, key, value)
 
     db.commit()
     db.refresh(item)
-    return item
+    by_id = {m.id: m for m in db.query(MenuItem).all()}
+    return _serialize_menu_item(item, by_id, 0)
 
 
 @router.patch("/{menu_id}/toggle", response_model=MenuItemResponse)
@@ -215,7 +285,8 @@ def toggle_menu_availability(menu_id: str, db: Session = Depends(get_db), _admin
     item.is_available = not item.is_available
     db.commit()
     db.refresh(item)
-    return item
+    by_id = {m.id: m for m in db.query(MenuItem).all()}
+    return _serialize_menu_item(item, by_id, 0)
 
 
 @router.delete("/{menu_id}", status_code=status.HTTP_204_NO_CONTENT)

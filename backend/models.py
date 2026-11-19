@@ -18,6 +18,8 @@ class MenuItem(Base):
     price = Column(Float, nullable=False, default=1.0)
     image = Column(Text, nullable=True)
     is_available = Column(Boolean, default=True, nullable=False)
+    # Stok opsional: NULL = tanpa batas stok; >= 0 = stok terukur (0 = habis).
+    stock = Column(Integer, nullable=True)
     # Paket bundling: satu harga untuk beberapa menu. bundle_items = JSON
     # '[{"id": "menu-x", "quantity": 2}]'. Non-paket selalu NULL.
     is_bundle = Column(Boolean, default=False, nullable=False)

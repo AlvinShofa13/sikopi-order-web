@@ -661,6 +661,72 @@ def _rp(amount: float) -> str:
     return "Rp" + f"{float(amount or 0.0):,.0f}".replace(",", ".")
 
 
+def _collect_stock_demands(db: Session, items) -> dict[str, int]:
+    """Hitung total kebutuhan stok per menu_item_id (menguraikan paket bundel menjadi komponennya)."""
+    demands: dict[str, int] = {}
+    for it in items:
+        item_id = (getattr(it, "id", None) or getattr(it, "menu_item_id", None) or "").strip()
+        qty = int(getattr(it, "quantity", 0) or 0)
+        if not item_id or qty <= 0:
+            continue
+        menu_item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
+        if not menu_item:
+            continue
+        demands[menu_item.id] = demands.get(menu_item.id, 0) + qty
+        if getattr(menu_item, "is_bundle", False) and getattr(menu_item, "bundle_items", None):
+            try:
+                lines = json.loads(menu_item.bundle_items or "[]")
+            except (ValueError, TypeError):
+                lines = []
+            for line in lines if isinstance(lines, list) else []:
+                if not isinstance(line, dict):
+                    continue
+                comp_id = (line.get("id") or "").strip()
+                comp_qty = int(line.get("quantity") or 0)
+                if comp_id and comp_qty > 0:
+                    demands[comp_id] = demands.get(comp_id, 0) + (comp_qty * qty)
+    return demands
+
+
+def _validate_and_deduct_stock(db: Session, items) -> None:
+    """Validasi ketersediaan & kurangi stok (termasuk komponen paket bundel) sebelum commit."""
+    demands = _collect_stock_demands(db, items)
+    for item_id, needed in demands.items():
+        m = db.query(MenuItem).filter(MenuItem.id == item_id).first()
+        if not m:
+            continue
+        if not m.is_available:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Maaf, '{m.name}' sedang habis / tidak tersedia.",
+            )
+        if m.stock is not None:
+            if int(m.stock) < needed:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Stok '{m.name}' tidak mencukupi (tersisa {int(m.stock)}, dibutuhkan {needed}).",
+                )
+            m.stock = int(m.stock) - needed
+
+
+def _adjust_stock_on_status_change(db: Session, ord: Order, prev_status: str, new_status: str) -> None:
+    """Kembalikan stok bila pesanan dibatalkan; kurangi lagi bila dipulihkan dari batal."""
+    cancel_states = {"Batal", "Dibatalkan"}
+    was_cancelled = (prev_status or "") in cancel_states
+    is_cancelled = (new_status or "") in cancel_states
+    if was_cancelled == is_cancelled:
+        return
+    demands = _collect_stock_demands(db, ord.items or [])
+    for item_id, qty in demands.items():
+        m = db.query(MenuItem).filter(MenuItem.id == item_id).first()
+        if not m or m.stock is None:
+            continue
+        if is_cancelled:
+            m.stock = int(m.stock) + qty
+        else:
+            m.stock = max(0, int(m.stock) - qty)
+
+
 def _price_with_breakdown(db: Session, items, *, require_variants: bool = True) -> tuple:
     """Hitung ulang harga dari `menu_items` (abaikan price client).
 
@@ -703,6 +769,8 @@ def _price_with_breakdown(db: Session, items, *, require_variants: bool = True) 
             "notes": note,
             "subtotal": line_total,
         })
+
+    _validate_and_deduct_stock(db, items)
 
     eco_fee = 0.0   # mode uji: biaya kemasan 0
     tax = 0.0       # mode uji: PB1 0
@@ -969,6 +1037,7 @@ async def update_order_status(
 
     if payload.order_status:
         ord.order_status = payload.order_status
+        _adjust_stock_on_status_change(db, ord, prev_status, payload.order_status)
         if payload.order_status == "Selesai" and not ord.rating_token:
             ord.rating_token = secrets.token_urlsafe(16)
     if payload.cash_received is not None:

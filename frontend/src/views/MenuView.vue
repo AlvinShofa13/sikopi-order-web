@@ -125,7 +125,11 @@ function confirmAddWithNote() {
     variantError.value = `Mohon pilih varian wajib terlebih dahulu: ${missing.join(', ')}`
     return
   }
-  store.addToCart(activeItemForNote.value, itemNoteInput.value, itemVariantsInput.value)
+  const ok = store.addToCart(activeItemForNote.value, itemNoteInput.value, itemVariantsInput.value)
+  if (!ok) {
+    variantError.value = `Stok ${activeItemForNote.value.name} tidak mencukupi.`
+    return
+  }
   showToast(`${activeItemForNote.value.name} ditambahkan ke pesanan`)
   closeNoteModal()
 }
@@ -141,7 +145,11 @@ function quickAddToCart(item) {
     openNoteModal(item)
     return
   }
-  store.addToCart(item)
+  const ok = store.addToCart(item)
+  if (!ok) {
+    showToast(`Stok ${item.name} tidak mencukupi.`)
+    return
+  }
   showToast(`${item.name} berhasil ditambahkan`)
 }
 

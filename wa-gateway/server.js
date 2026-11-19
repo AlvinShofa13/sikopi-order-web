@@ -71,39 +71,76 @@ const silentLogger = {
   child() { return this }
 }
 
+let consecutiveFails = 0
+
+function resetOldSession() {
+  try {
+    sock?.ev?.removeAllListeners()
+    sock?.end?.()
+  } catch { /* abaikan */ }
+  sock = null
+  lastQr = null
+  clearAuthDir()
+}
+
 async function connect() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
-  const { version } = await fetchLatestBaileysVersion()
+  try {
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+    const { version } = await fetchLatestBaileysVersion()
 
-  sock = makeWASocket({
-    version,
-    auth: state,
-    logger: silentLogger,
-    printQRInTerminal: false,
-    browser: ['SIKopi Gateway', 'Chrome', '1.0']
-  })
+    sock = makeWASocket({
+      version,
+      auth: state,
+      logger: silentLogger,
+      printQRInTerminal: false,
+      browser: ['SIKopi Gateway', 'Chrome', '1.0'],
+      keepAliveIntervalMs: 25000,
+      connectTimeoutMs: 60000
+    })
 
-  sock.ev.on('creds.update', saveCreds)
+    sock.ev.on('creds.update', saveCreds)
 
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-    if (qr) {
-      lastQr = await QRCode.toDataURL(qr, { width: 280, margin: 1 })
-      connected = false
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+      if (qr) {
+        lastQr = await QRCode.toDataURL(qr, { width: 280, margin: 1 })
+        connected = false
+      }
+      if (connection === 'open') {
+        connected = true
+        lastQr = null
+        consecutiveFails = 0
+        console.log('[wa] terhubung sebagai perangkat tertaut')
+      }
+      if (connection === 'close') {
+        connected = false
+        consecutiveFails += 1
+        const code = lastDisconnect?.error?.output?.statusCode
+        const shouldResetAuth =
+          code === DisconnectReason.loggedOut ||
+          code === DisconnectReason.badSession ||
+          consecutiveFails >= 3
+
+        if (shouldResetAuth) {
+          consecutiveFails = 0
+          resetOldSession()
+          console.log(`[wa] koneksi gagal/terputus (code ${code}) — sesi dibersihkan, membuat QR baru...`)
+          scheduleConnect(1000)
+        } else {
+          console.log(`[wa] koneksi tertutup (code ${code}) — mencoba reconnect (${consecutiveFails}/3)...`)
+          scheduleConnect(5000)
+        }
+      }
+    })
+  } catch (err) {
+    connected = false
+    consecutiveFails += 1
+    console.log('[wa] gagal inisialisasi koneksi:', err && err.message)
+    if (consecutiveFails >= 3) {
+      consecutiveFails = 0
+      resetOldSession()
     }
-    if (connection === 'open') {
-      connected = true
-      lastQr = null
-      console.log('[wa] terhubung sebagai perangkat tertaut')
-    }
-    if (connection === 'close') {
-      connected = false
-      const code = lastDisconnect?.error?.output?.statusCode
-      const loggedOut = code === DisconnectReason.loggedOut
-      console.log(`[wa] koneksi tertutup (code ${code})${loggedOut ? ' — sesi dihapus, perlu scan ulang' : ' — mencoba lagi...'}`)
-      // loggedOut (401): hapus sesi agar QR baru muncul; selain itu reconnect otomatis.
-      scheduleConnect(loggedOut ? 1000 : 5000)
-    }
-  })
+    scheduleConnect(5000)
+  }
 }
 
 app.post('/send', async (req, res) => {
