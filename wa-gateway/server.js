@@ -72,8 +72,31 @@ const silentLogger = {
 }
 
 let consecutiveFails = 0
+let heartbeatTimer = null
+
+function stopHeartbeat() {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
+}
+
+function startHeartbeat() {
+  stopHeartbeat()
+  heartbeatTimer = setInterval(async () => {
+    if (!connected || !sock) return
+    try {
+      await sock.sendPresenceUpdate('available')
+    } catch {
+      connected = false
+      stopHeartbeat()
+      scheduleConnect(3000)
+    }
+  }, 4 * 60 * 1000)
+}
 
 function resetOldSession() {
+  stopHeartbeat()
   try {
     sock?.ev?.removeAllListeners()
     sock?.end?.()
@@ -95,7 +118,8 @@ async function connect() {
       printQRInTerminal: false,
       browser: ['SIKopi Gateway', 'Chrome', '1.0'],
       keepAliveIntervalMs: 25000,
-      connectTimeoutMs: 60000
+      connectTimeoutMs: 60000,
+      markOnlineOnConnect: false
     })
 
     sock.ev.on('creds.update', saveCreds)
@@ -109,37 +133,38 @@ async function connect() {
         connected = true
         lastQr = null
         consecutiveFails = 0
+        startHeartbeat()
         console.log('[wa] terhubung sebagai perangkat tertaut')
       }
       if (connection === 'close') {
         connected = false
+        stopHeartbeat()
         consecutiveFails += 1
         const code = lastDisconnect?.error?.output?.statusCode
-        const shouldResetAuth =
+        const isAuthInvalid =
           code === DisconnectReason.loggedOut ||
           code === DisconnectReason.badSession ||
-          consecutiveFails >= 3
+          code === DisconnectReason.multideviceMismatch
 
-        if (shouldResetAuth) {
+        if (isAuthInvalid) {
           consecutiveFails = 0
           resetOldSession()
-          console.log(`[wa] koneksi gagal/terputus (code ${code}) — sesi dibersihkan, membuat QR baru...`)
+          console.log(`[wa] sesi tidak valid (code ${code}) — sesi dibersihkan, membuat QR baru...`)
           scheduleConnect(1000)
         } else {
-          console.log(`[wa] koneksi tertutup (code ${code}) — mencoba reconnect (${consecutiveFails}/3)...`)
-          scheduleConnect(5000)
+          const delay = Math.min(15000, consecutiveFails * 5000)
+          console.log(`[wa] koneksi terputus sementara (code ${code}) — mencoba reconnect (${delay / 1000}s)...`)
+          scheduleConnect(delay)
         }
       }
     })
   } catch (err) {
     connected = false
+    stopHeartbeat()
     consecutiveFails += 1
+    const delay = Math.min(15000, consecutiveFails * 5000)
     console.log('[wa] gagal inisialisasi koneksi:', err && err.message)
-    if (consecutiveFails >= 3) {
-      consecutiveFails = 0
-      resetOldSession()
-    }
-    scheduleConnect(5000)
+    scheduleConnect(delay)
   }
 }
 

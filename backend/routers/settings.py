@@ -18,6 +18,10 @@ class BrandingSettingsPayload(BaseModel):
     brand_font: Optional[str] = "default"
 
 
+class PickupLocationPayload(BaseModel):
+    pickup_location: Optional[str] = ""
+
+
 def _get(db: Session, key: str, default: str) -> str:
     row = db.query(AppSetting).filter(AppSetting.key == key).first()
     return row.value if row and row.value else default
@@ -43,6 +47,7 @@ def get_public_settings(db: Session = Depends(get_db)):
         "brand_name": _get(db, "brand_name", "SIKopi"),
         "brand_icon": _get(db, "brand_icon", "coffee"),
         "brand_font": _get(db, "brand_font", "default"),
+        "pickup_location": _get(db, "pickup_location", ""),
         "admin_whatsapp": normalize_phone(os.getenv("ADMIN_WHATSAPP")),
         **mode_payload(db),
     }
@@ -68,3 +73,20 @@ def update_branding_settings(
 
     db.commit()
     return {"brand_icon": target_icon, "brand_name": target_name, "brand_font": target_font}
+
+
+@router.put("/pickup-location")
+def update_pickup_location(
+    payload: PickupLocationPayload,
+    db: Session = Depends(get_db),
+    _admin: bool = Depends(require_admin),
+):
+    """Perbarui lokasi pengambilan default untuk pesan WhatsApp pelanggan (Admin)."""
+    val = (payload.pickup_location or "").strip()
+    row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
+    if row:
+        row.value = val
+    else:
+        db.add(AppSetting(key="pickup_location", value=val))
+    db.commit()
+    return {"pickup_location": val}

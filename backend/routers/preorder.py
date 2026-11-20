@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from auth_dep import require_admin
 from database import get_db
-from models import AppSetting, Order, PreorderBatch
+from models import AppSetting, MenuItem, Order, PreorderBatch
 from schemas import ModeSwitchRequest, PauseOrderingRequest, PreorderBatchCreate, PreorderBatchUpdate
 
 router = APIRouter(prefix="/preorder", tags=["Preorder & Mode"])
@@ -254,22 +254,29 @@ def reopen_batch(batch_id: int, db: Session = Depends(get_db), _admin: bool = De
     return {"success": True, "batch": serialize_batch(batch)}
 
 
-@router.get("/batches/{batch_id}/recap")
-def get_batch_recap(batch_id: int, db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
-    """Rekap pesanan, total item, dan omzet per batch Open PO (Admin)."""
-    batch = db.query(PreorderBatch).filter(PreorderBatch.id == batch_id).first()
-    if not batch:
-        raise HTTPException(status_code=404, detail="Batch tidak ditemukan.")
+def _classify_recap_group(category: str, name: str) -> str:
+    txt = f"{category} {name}".lower()
+    drink_keys = ("kopi", "minuman", "drink", "beverage", "tea", "teh", "matcha", "latte", "espresso", "americano", "coklat", "chocolate", "susu")
+    if any(k in txt for k in drink_keys):
+        return "minuman"
+    return "makanan"
 
-    orders = (
-        db.query(Order)
-        .options(joinedload(Order.items))
-        .filter(Order.batch_id == batch_id)
-        .order_by(Order.created_at.desc())
-        .all()
-    )
 
-    active_orders = [o for o in orders if (o.order_status or "") != "Dibatalkan"]
+def _build_recap_payload(
+    db: Session,
+    orders: list[Order],
+    *,
+    batch: Optional[PreorderBatch] = None,
+    title: str = "",
+) -> dict[str, Any]:
+    """Susun payload rekap pesanan (dipakai bersama oleh rekap per batch dan rekap On-site)."""
+    loc_row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
+    global_pickup_loc = (loc_row.value if loc_row and loc_row.value else "").strip()
+    menu_rows = db.query(MenuItem.id, MenuItem.name, MenuItem.category).all()
+    cat_by_id = {m.id: (m.category or "") for m in menu_rows}
+    cat_by_name = {m.name: (m.category or "") for m in menu_rows}
+
+    active_orders = [o for o in orders if (o.order_status or "") not in ("Batal", "Dibatalkan")]
     cancelled_count = len(orders) - len(active_orders)
     paid_orders = sum(1 for o in active_orders if o.is_paid)
     unpaid_orders = len(active_orders) - paid_orders
@@ -279,9 +286,11 @@ def get_batch_recap(batch_id: int, db: Session = Depends(get_db), _admin: bool =
     item_map: dict[str, dict[str, Any]] = {}
     for ord in active_orders:
         for it in ord.items:
+            cat = cat_by_id.get(it.menu_item_id) or cat_by_name.get(it.name) or ""
+            grp = _classify_recap_group(cat, it.name)
             entry = item_map.setdefault(
                 it.name,
-                {"name": it.name, "total_qty": 0, "total_revenue": 0.0, "variants_map": {}},
+                {"name": it.name, "category": cat, "group": grp, "total_qty": 0, "total_revenue": 0.0, "variants_map": {}},
             )
             qty = int(it.quantity or 0)
             entry["total_qty"] += qty
@@ -297,6 +306,8 @@ def get_batch_recap(batch_id: int, db: Session = Depends(get_db), _admin: bool =
         ]
         items_summary.append({
             "name": entry["name"],
+            "category": entry["category"],
+            "group": entry["group"],
             "total_qty": entry["total_qty"],
             "total_revenue": entry["total_revenue"],
             "variants_breakdown": breakdown,
@@ -326,8 +337,12 @@ def get_batch_recap(batch_id: int, db: Session = Depends(get_db), _admin: bool =
         for o in orders
     ]
 
+    batch_data = serialize_batch(batch) if batch else {"id": None, "name": title or "On-site (Belum Selesai)"}
+    pickup_loc = ((batch.notes or "").strip() if batch else "") or global_pickup_loc
+
     return {
-        "batch": serialize_batch(batch),
+        "batch": batch_data,
+        "pickup_location": pickup_loc,
         "summary": {
             "total_orders": len(active_orders),
             "cancelled_orders": cancelled_count,
@@ -340,3 +355,36 @@ def get_batch_recap(batch_id: int, db: Session = Depends(get_db), _admin: bool =
         "items_summary": items_summary,
         "orders": orders_brief,
     }
+
+
+@router.get("/batches/{batch_id}/recap")
+def get_batch_recap(batch_id: int, db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
+    """Rekap pesanan khusus batch Open PO yang dipilih (Admin)."""
+    batch = db.query(PreorderBatch).filter(PreorderBatch.id == batch_id).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch tidak ditemukan.")
+
+    orders = (
+        db.query(Order)
+        .options(joinedload(Order.items))
+        .filter(Order.batch_id == batch_id)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+    return _build_recap_payload(db, orders, batch=batch)
+
+
+@router.get("/recap/onsite")
+def get_onsite_recap(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
+    """Rekap pesanan On-site / POS yang statusnya belum Selesai (dan tidak batal) (Admin)."""
+    orders = (
+        db.query(Order)
+        .options(joinedload(Order.items))
+        .filter(
+            Order.channel == MODE_POS,
+            Order.order_status.notin_(["Selesai", "Batal", "Dibatalkan"]),
+        )
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+    return _build_recap_payload(db, orders, batch=None, title="On-site (Belum Selesai)")

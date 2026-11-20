@@ -11,7 +11,7 @@ from database import get_db
 from models import AppSetting, Order
 from routers.orders import normalize_phone, serialize_order
 from wa_client import send_wa_text, wa_gateway_logout, wa_gateway_status
-from wa_templates import order_receipt_text
+from wa_templates import order_receipt_text, pickup_reminder_text
 
 router = APIRouter(prefix="/wa", tags=["WhatsApp Gateway"])
 
@@ -77,6 +77,28 @@ def send_order_receipt(order_id: str, db: Session = Depends(get_db), _admin: boo
     return TestMessageResponse(
         success=ok,
         message=f"Nota digital {ord.order_id} terkirim ke WhatsApp customer."
+        if ok
+        else "Gateway tidak terjangkau / belum pairing. Periksa service wa-gateway dan scan QR.",
+    )
+
+
+@router.post("/order/{order_id}/reminder", response_model=TestMessageResponse)
+def send_pickup_reminder(order_id: str, db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
+    """Kirim pengingat pengambilan pesanan ke WhatsApp pelanggan (Admin)."""
+    ord = db.query(Order).filter(Order.order_id == (order_id or "").strip().upper()).first()
+    if not ord:
+        raise HTTPException(status_code=404, detail="Pesanan tidak ditemukan.")
+    phone = ord.customer_phone or ""
+    if not phone or phone == "-":
+        return TestMessageResponse(success=False, message="Nomor WhatsApp customer kosong pada pesanan ini.")
+    brand_row = db.query(AppSetting).filter(AppSetting.key == "brand_name").first()
+    brand = (brand_row.value if brand_row and brand_row.value else "SIKopi").strip() or "SIKopi"
+    loc_row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
+    pickup_loc = (loc_row.value if loc_row and loc_row.value else "").strip()
+    ok = send_wa_text(phone, pickup_reminder_text(serialize_order(ord), brand, pickup_loc))
+    return TestMessageResponse(
+        success=ok,
+        message=f"Pengingat pengambilan {ord.order_id} terkirim ke WhatsApp customer."
         if ok
         else "Gateway tidak terjangkau / belum pairing. Periksa service wa-gateway dan scan QR.",
     )

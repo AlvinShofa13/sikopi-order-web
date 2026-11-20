@@ -7,7 +7,7 @@ import AppIcon from '@/components/icons/AppIcon.vue'
 import AdminPosPanel from '@/components/AdminPosPanel.vue'
 import { api } from '@/services/api'
 import { formatRupiah, isCustomImage, createToast, parseBundleItems, bundleContentsLabel, bundleSavings, parseVariants, parseVariantGroups, variantsLabel } from '@/utils/format'
-import { orderStatusText, waLink } from '@/utils/wa'
+import { orderStatusText, pickupReminderText, waLink } from '@/utils/wa'
 import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl } from '@/utils/salesAnalytics'
 import { isBluetoothSupported, printReceiptViaBluetooth, getSavedPrinterName, forgetBluetoothPrinter } from '@/utils/bluetoothPrinter'
 import { generateDynamicQrisPayload, generateQrisDataUrl, getQrisImageUrl } from '@/utils/qris'
@@ -360,8 +360,23 @@ const isCreatingBatch = ref(false)
 async function fetchModeSettings() {
   await store.fetchPublicSettings()
   pauseMsgInput.value = store.pauseMessage || ''
+  pickupLocationInput.value = store.pickupLocation || ''
   const res = await api.preorder.listBatches()
   if (res.ok && Array.isArray(res.data)) batchList.value = res.data
+}
+
+const pickupLocationInput = ref('')
+const pickupLocationSaving = ref(false)
+
+async function savePickupLocation() {
+  pickupLocationSaving.value = true
+  const res = await store.updatePickupLocation(pickupLocationInput.value.trim())
+  pickupLocationSaving.value = false
+  if (!res.ok) {
+    showToast(res.error || 'Gagal menyimpan lokasi pengambilan.', 'error')
+    return
+  }
+  showToast('Lokasi pengambilan berhasil disimpan dan dipakai di pesan WA pelanggan.')
 }
 
 const pauseSaving = ref(false)
@@ -387,18 +402,26 @@ const recapBatch = ref(null)
 const recapData = ref(null)
 const recapLoading = ref(false)
 
-async function openBatchRecap(batch) {
-  recapBatch.value = batch
+async function loadRecap(meta, fetcher) {
+  recapBatch.value = meta
   recapData.value = null
   recapLoading.value = true
-  const res = await api.preorder.getBatchRecap(batch.id)
+  const res = await fetcher()
   recapLoading.value = false
   if (!res.ok) {
-    showToast(res.error || 'Gagal memuat rekap pesanan batch.', 'error')
+    showToast(res.error || 'Gagal memuat rekap pesanan.', 'error')
     recapBatch.value = null
     return
   }
   recapData.value = res.data
+}
+
+function openBatchRecap(batch) {
+  return loadRecap(batch, () => api.preorder.getBatchRecap(batch.id))
+}
+
+function openOnsiteRecap() {
+  return loadRecap({ id: null, name: 'On-site (Belum Selesai)' }, () => api.preorder.getOnsiteRecap())
 }
 
 function closeBatchRecap() {
@@ -406,28 +429,101 @@ function closeBatchRecap() {
   recapData.value = null
 }
 
-async function copyBatchRecapText() {
-  if (!recapData.value) return
-  const { batch, summary, items_summary: items } = recapData.value
+function buildChefRecapText() {
+  if (!recapData.value) return ''
+  const { batch, pickup_location: pickupLoc, summary, items_summary: items, orders } = recapData.value
+  const drinks = (items || []).filter((i) => i.group === 'minuman')
+  const foods = (items || []).filter((i) => i.group !== 'minuman')
+  const activeOrders = (orders || []).filter((o) => o.orderStatus !== 'Batal' && o.orderStatus !== 'Dibatalkan')
+
   const lines = [
-    `REKAP PESANAN — ${batch.name}`,
-    `Total Pesanan: ${summary.total_orders} (Lunas: ${summary.paid_orders}, Belum Lunas: ${summary.unpaid_orders})`,
-    `Total Item: ${summary.total_items_qty} | Omzet: ${formatRupiah(summary.total_revenue)}`,
+    `*REKAP PRODUKSI — ${batch.name}*`,
+    pickupLoc ? `Lokasi Pengambilan: ${pickupLoc}` : null,
+    `Total Pesanan: ${summary.total_orders} | Total Item: ${summary.total_items_qty} pcs`,
     '',
-    'RINCIAN ITEM:'
+    '===== MINUMAN ====='
   ]
-  for (const it of items) {
-    lines.push(`- ${it.name}: ${it.total_qty}x`)
-    for (const v of it.variants_breakdown || []) {
-      lines.push(`   • ${v.qty}x ${v.label}`)
+  if (drinks.length === 0) {
+    lines.push('- (Tidak ada minuman)')
+  } else {
+    for (const it of drinks) {
+      lines.push(`• ${it.name}: ${it.total_qty}x`)
+      for (const v of it.variants_breakdown || []) {
+        lines.push(`   - ${v.qty}x ${v.label}`)
+      }
     }
   }
+
+  lines.push('', '===== MAKANAN =====')
+  if (foods.length === 0) {
+    lines.push('- (Tidak ada makanan)')
+  } else {
+    for (const it of foods) {
+      lines.push(`• ${it.name}: ${it.total_qty}x`)
+      for (const v of it.variants_breakdown || []) {
+        lines.push(`   - ${v.qty}x ${v.label}`)
+      }
+    }
+  }
+
+  lines.push('', '===== DAFTAR PEMESAN =====')
+  if (activeOrders.length === 0) {
+    lines.push('- (Belum ada pemesan aktif)')
+  } else {
+    activeOrders.forEach((o, idx) => {
+      const itemText = (o.items || [])
+        .map((it) => `${it.quantity}x ${it.name}${it.notes ? ` (${it.notes})` : ''}`)
+        .join(', ')
+      lines.push(`${idx + 1}. *${o.customerName}* (${o.orderId}): ${itemText}`)
+    })
+  }
+  return lines.filter((l) => l !== null).join('\n')
+}
+
+async function copyBatchRecapText() {
+  const txt = buildChefRecapText()
+  if (!txt) return
   try {
-    await navigator.clipboard.writeText(lines.join('\n'))
-    showToast('Rekap pesanan disalin ke clipboard.')
+    await navigator.clipboard.writeText(txt)
+    showToast('Rekap pesanan (Makanan & Minuman) disalin ke clipboard.')
   } catch {
     showToast('Gagal menyalin rekap.', 'error')
   }
+}
+
+function sendBatchRecapToWaGroup() {
+  const txt = buildChefRecapText()
+  if (!txt) return
+  window.open(`https://wa.me/?text=${encodeURIComponent(txt)}`, '_blank', 'noopener')
+}
+
+async function sendOrderPickupReminder(order) {
+  const phone = order?.customer?.phone || order?.customerPhone || ''
+  if (!phone || phone === '-') {
+    showToast('Nomor WhatsApp customer kosong pada pesanan ini.', 'error')
+    return
+  }
+  if (store.waConnected) {
+    const res = await api.wa.sendReminder(order.orderId)
+    if (res.ok && res.data?.success) {
+      showToast(res.data.message || `Reminder pengambilan ${order.orderId} terkirim.`)
+      return
+    }
+  }
+  const msg = pickupReminderText(
+    {
+      ...order,
+      batch: order.batch || recapData.value?.batch || null
+    },
+    store.brandName,
+    store.pickupLocation
+  )
+  const url = waLink(phone, msg)
+  if (!url) {
+    showToast('Nomor WhatsApp tidak valid.', 'error')
+    return
+  }
+  window.open(url, '_blank', 'noopener')
 }
 
 async function switchMode(mode) {
@@ -586,6 +682,7 @@ const WA_STATUS_OPTIONS = [
   'Diterima & Disiapkan',
   'Sedang Disiapkan',
   'Siap Diambil',
+  'Reschedule Pengambilan',
   'Selesai',
   'Batal'
 ]
@@ -595,7 +692,7 @@ function sendWaStatus(order, status) {
     showToast('Nomor WhatsApp customer kosong pada pesanan ini.', 'error')
     return
   }
-  const url = waLink(order.customer.phone, orderStatusText(order, status, store.brandName))
+  const url = waLink(order.customer.phone, orderStatusText(order, status, store.brandName, store.pickupLocation))
   if (!url) {
     showToast('Nomor WhatsApp tidak valid.', 'error')
     return
@@ -1098,6 +1195,7 @@ async function revertPaidStatus(order) {
 // Preparation Status Update (Dapur & Barista)
 function normalizePrepStatus(status) {
   if (status === 'Siap Diambil' || status === 'Siap Disajikan') return 'Siap Diambil'
+  if (status === 'Reschedule Pengambilan') return 'Reschedule Pengambilan'
   if (status === 'Selesai') return 'Selesai'
   if (status === 'Batal' || status === 'Dibatalkan') return 'Batal'
   return 'Sedang Disiapkan'
@@ -1106,6 +1204,7 @@ function normalizePrepStatus(status) {
 function getPrepClass(status) {
   const s = normalizePrepStatus(status)
   if (s === 'Siap Diambil') return 'prep-ready'
+  if (s === 'Reschedule Pengambilan') return 'prep-reschedule'
   if (s === 'Selesai') return 'prep-done'
   if (s === 'Batal') return 'prep-cancelled'
   return 'prep-cooking'
@@ -1650,6 +1749,32 @@ async function handleResetBranding() {
             </div>
           </div>
 
+          <!-- Lokasi Pengambilan (dipakai otomatis di pesan WhatsApp pelanggan) -->
+          <div class="pause-control-box">
+            <div class="pause-control-head">
+              <div class="pause-control-info">
+                <strong>Lokasi Pengambilan Pesanan</strong>
+                <span>Jika diisi, pesan WhatsApp ke pelanggan akan menampilkan lokasi ini (bukan teks template).</span>
+              </div>
+            </div>
+            <div class="pause-msg-row">
+              <input
+                v-model="pickupLocationInput"
+                type="text"
+                class="pause-msg-input"
+                placeholder="Contoh: Lobby Gedung A Telkom University Jakarta Kampus Minangkabau"
+              />
+              <button
+                type="button"
+                class="btn-act btn-detail"
+                :disabled="pickupLocationSaving"
+                @click="savePickupLocation"
+              >
+                <span>{{ pickupLocationSaving ? 'Menyimpan...' : 'Simpan Lokasi' }}</span>
+              </button>
+            </div>
+          </div>
+
           <p class="token-hero-hint">
             <strong>Alur Kerja:</strong> Pelanggan melihat menu tanpa login, lalu di halaman
             pembayaran memasukkan nama + nomor WhatsApp.
@@ -1766,6 +1891,16 @@ async function handleResetBranding() {
               <button
                 type="button"
                 class="btn-export"
+                @click="openOnsiteRecap"
+                title="Lihat rekap pesanan On-site yang statusnya belum selesai"
+              >
+                <AppIcon name="coffee" :size="14" />
+                <span>Rekap On-site</span>
+              </button>
+
+              <button
+                type="button"
+                class="btn-export"
                 :disabled="isExporting || filteredOrders.length === 0"
                 @click="handleExport('csv')"
                 title="Unduh data penjualan sebagai CSV (dibuka di Excel)"
@@ -1879,6 +2014,7 @@ async function handleResetBranding() {
                     >
                       <option value="Sedang Disiapkan">Sedang Disiapkan</option>
                       <option value="Siap Diambil">Siap Diambil</option>
+                      <option value="Reschedule Pengambilan">Reschedule Pengambilan</option>
                       <option value="Selesai">Selesai</option>
                       <option value="Batal">Batal</option>
                     </select>
@@ -2977,6 +3113,16 @@ async function handleResetBranding() {
 
                 <button
                   type="button"
+                  class="btn-prep-opt opt-reschedule"
+                  :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Reschedule Pengambilan' }"
+                  @click="handleUpdatePrepStatus(selectedOrder, 'Reschedule Pengambilan')"
+                >
+                  <AppIcon name="clock" :size="14" />
+                  <span>Reschedule Pengambilan</span>
+                </button>
+
+                <button
+                  type="button"
                   class="btn-prep-opt opt-done"
                   :class="{ active: normalizePrepStatus(selectedOrder.orderStatus) === 'Selesai' }"
                   @click="handleUpdatePrepStatus(selectedOrder, 'Selesai')"
@@ -3011,6 +3157,16 @@ async function handleResetBranding() {
                   >
                     <AppIcon name="phone" :size="13" />
                     <span>{{ opt }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-wa-status"
+                    :disabled="!selectedOrder.customer?.phone"
+                    title="Kirim pengingat pengambilan ke WhatsApp pelanggan"
+                    @click="sendOrderPickupReminder(selectedOrder)"
+                  >
+                    <AppIcon name="clock" :size="13" />
+                    <span>Reminder Pengambilan</span>
                   </button>
                 </div>
               </div>
@@ -3435,10 +3591,16 @@ async function handleResetBranding() {
               <div class="recap-section">
                 <div class="recap-section-head">
                   <h4>Rincian Produksi Dapur / Barista</h4>
-                  <button type="button" class="btn-act btn-detail" @click="copyBatchRecapText">
-                    <AppIcon name="receipt" :size="13" />
-                    <span>Salin Teks Rekap</span>
-                  </button>
+                  <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <button type="button" class="btn-act btn-detail" @click="copyBatchRecapText">
+                      <AppIcon name="receipt" :size="13" />
+                      <span>Salin Teks Rekap</span>
+                    </button>
+                    <button type="button" class="btn-act btn-print" @click="sendBatchRecapToWaGroup">
+                      <AppIcon name="phone" :size="13" />
+                      <span>Kirim ke Grup WA (Chef)</span>
+                    </button>
+                  </div>
                 </div>
                 <div v-if="recapData.items_summary.length === 0" class="variant-empty">
                   Belum ada pesanan aktif di batch ini.
@@ -3471,6 +3633,16 @@ async function handleResetBranding() {
                       <span class="recap-status-pill" :class="{ paid: ord.isPaid }">
                         {{ ord.isPaid ? 'Lunas' : 'Belum Lunas' }} · {{ ord.orderStatus }}
                       </span>
+                      <button
+                        v-if="ord.customerPhone && ord.customerPhone !== '-'"
+                        type="button"
+                        class="btn-act btn-detail"
+                        style="margin-left: auto; padding: 3px 8px; font-size: 0.72rem;"
+                        @click="sendOrderPickupReminder(ord)"
+                      >
+                        <AppIcon name="phone" :size="12" />
+                        <span>Reminder Ambil</span>
+                      </button>
                     </div>
                     <div class="recap-order-items">
                       <span v-for="(oit, oi) in ord.items" :key="oi">
@@ -7727,5 +7899,17 @@ async function handleResetBranding() {
   background-color: var(--color-peach, #D9886A);
   border: 1px solid var(--color-primary, #2C4A3E);
   border-radius: 0;
+}
+
+.prep-select.prep-reschedule {
+  background-color: #FEF3C7;
+  color: #92400E;
+  border-color: #F59E0B;
+}
+
+.btn-prep-opt.opt-reschedule.active {
+  background-color: #D97706;
+  color: #FFFFFF;
+  border-color: #D97706;
 }
 </style>

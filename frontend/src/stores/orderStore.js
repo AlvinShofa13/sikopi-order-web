@@ -504,6 +504,7 @@ export const useOrderStore = defineStore('order', () => {
   const activeBatch = ref(null)
   const orderingPaused = ref(false)
   const pauseMessage = ref('')
+  const pickupLocation = ref('')
 
   const isPreorder = computed(() => activeMode.value === 'preorder')
   const isPreorderOpen = computed(() => isPreorder.value && !!activeBatch.value)
@@ -626,6 +627,7 @@ export const useOrderStore = defineStore('order', () => {
       }
     }
     adminWhatsapp.value = d.admin_whatsapp || ''
+    pickupLocation.value = d.pickup_location || ''
     if (d.mode === 'preorder' || d.mode === 'pos') {
       activeMode.value = d.mode
     } else {
@@ -657,6 +659,15 @@ export const useOrderStore = defineStore('order', () => {
       orderingPaused.value = !!res.data.paused
       pauseMessage.value = res.data.pause_message || ''
       broadcastChange('PAUSE_UPDATED', { paused: orderingPaused.value })
+    }
+    return res
+  }
+
+  async function updatePickupLocation(loc) {
+    const res = await api.settings.updatePickupLocation(loc)
+    if (res.ok && res.data) {
+      pickupLocation.value = res.data.pickup_location || ''
+      broadcastChange('MODE_UPDATED', { pickup_location: pickupLocation.value })
     }
     return res
   }
@@ -823,9 +834,11 @@ export const useOrderStore = defineStore('order', () => {
     isPreorderOpen,
     orderingPaused,
     pauseMessage,
+    pickupLocation,
     fetchPublicSettings,
     switchMode,
     setOrderingPause,
+    updatePickupLocation,
     waConnected,
     waReachable,
     waQr,

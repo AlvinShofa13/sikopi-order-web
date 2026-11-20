@@ -25,7 +25,14 @@ def _item_lines(items) -> str:
     return "\n".join(rows)
 
 
-def order_created_text(order: dict, brand: str = BRAND_FALLBACK) -> str:
+def _resolve_pickup_location(order: dict, pickup_location: str = "") -> str:
+    batch = order.get("batch") or {}
+    batch_loc = (batch.get("notes") or "").strip()
+    global_loc = (pickup_location or "").strip()
+    return batch_loc or global_loc
+
+
+def order_created_text(order: dict, brand: str = BRAND_FALLBACK, pickup_location: str = "") -> str:
     """Dikirim otomatis tepat setelah pesanan tercatat."""
     brand = brand or BRAND_FALLBACK
     channel = order.get("channel") or "pos"
@@ -33,6 +40,7 @@ def order_created_text(order: dict, brand: str = BRAND_FALLBACK) -> str:
     pay = order.get("payment") or {}
     cust = order.get("customer") or {}
     total = (order.get("breakdown") or {}).get("total") or 0
+    loc = _resolve_pickup_location(order, pickup_location)
 
     lines = [
         f"*{brand} — Pesanan Diterima*",
@@ -53,6 +61,8 @@ def order_created_text(order: dict, brand: str = BRAND_FALLBACK) -> str:
         lines += ["", "Bukti pembayaran Anda sedang diperiksa kasir. Kami kabari lagi setelah terverifikasi."]
     if channel == "preorder" and batch.get("pickupDate"):
         lines += ["", f"Siap diambil: {batch['pickupDate']}"]
+    if loc:
+        lines += [f"Lokasi pengambilan: *{loc}*"]
     lines += ["", "Simpan pesan ini — kode pesanan dipakai untuk cek status."]
     return "\n".join(lines)
 
@@ -97,11 +107,17 @@ def order_receipt_text(order: dict, brand: str = BRAND_FALLBACK) -> str:
     return "\n".join(lines)
 
 
-def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK) -> str:
+def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK, pickup_location: str = "") -> str:
     """Dikirim otomatis setiap status penyiapan berubah."""
     brand = brand or BRAND_FALLBACK
     head = f"*{brand}* — Pesanan *{order.get('orderId')}*"
     batch = order.get("batch") or {}
+    loc = _resolve_pickup_location(order, pickup_location)
+    ready_line = (
+        f"Silakan ambil pesanan Anda di *{loc}* dan sebutkan kode pesanan di atas. Terima kasih!"
+        if loc
+        else "Silakan datang ke meja kasir dan sebutkan kode pesanan di atas. Terima kasih!"
+    )
     mapping = {
         "Diterima & Disiapkan": [
             head,
@@ -117,9 +133,17 @@ def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK) -> str:
         "Siap Diambil": [
             head,
             "",
-            "*Pesanan Anda SIAP DIAMBIL* di outlet kami.",
+            "*Pesanan Anda SIAP DIAMBIL*.",
             f"Batch: {batch['name']}" if batch.get("name") else None,
-            "Silakan datang ke meja kasir dan sebutkan kode pesanan di atas. Terima kasih!",
+            f"Lokasi: *{loc}*" if loc else None,
+            ready_line,
+        ],
+        "Reschedule Pengambilan": [
+            head,
+            "",
+            "*Pengambilan pesanan Anda DIJADWAL ULANG (Reschedule Pengambilan).*",
+            f"Batch: {batch['name']}" if batch.get("name") else None,
+            "Mohon hubungi kasir/admin untuk konfirmasi jadwal pengambilan terbaru. Terima kasih!",
         ],
         "Selesai": [
             head,
@@ -141,3 +165,22 @@ def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK) -> str:
     }
     body = mapping.get(status, [head, "", f"Status pesanan Anda: {status}"])
     return "\n".join(line for line in body if line is not None)
+
+
+def pickup_reminder_text(order: dict, brand: str = BRAND_FALLBACK, pickup_location: str = "") -> str:
+    """Pesan pengingat pengambilan pesanan untuk pelanggan."""
+    brand = brand or BRAND_FALLBACK
+    cust = order.get("customer") or {}
+    batch = order.get("batch") or {}
+    loc = _resolve_pickup_location(order, pickup_location)
+    lines = [
+        f"*{brand} — Pengingat Pengambilan Pesanan*",
+        "",
+        f"Halo *{cust.get('name') or 'Pelanggan'}*, pesanan Anda dengan kode *{order.get('orderId')}* sudah siap untuk diambil.",
+        f"Batch: {batch['name']}" if batch.get("name") else None,
+        f"Jadwal ambil: {batch['pickupDate']}" if batch.get("pickupDate") else None,
+        f"Lokasi pengambilan: *{loc}*" if loc else "Silakan datang ke outlet kami.",
+        "",
+        "Tunjukkan kode pesanan di atas saat pengambilan. Terima kasih!",
+    ]
+    return "\n".join(line for line in lines if line is not None)

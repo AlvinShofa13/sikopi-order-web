@@ -9,14 +9,16 @@ dari satu panel admin.
 ## Fitur utama
 
 - **Pesan tanpa login** — katalog, keranjang, dan pelacakan pesanan terbuka untuk semua.
-- **Dua mode jualan** (saling eksklusif, diganti dari panel admin):
+- **Dua mode jualan + Jeda Pemesanan** (saling eksklusif, dikelola dari panel admin):
   - *On-site / Hari Jualan* — pesan di outlet, bayar tunai atau QRIS di kasir.
-  - *Open PO* — pesan dari jauh per batch, wajib transfer + upload bukti pembayaran sebelum pesanan tercatat.
-- **QRIS dinamis** — nominal terkunci otomatis sesuai total belanja.
-- **Bukti pembayaran foto** — dikompres otomatis di browser (±2 MB), diverifikasi kasir sebelum lunas.
-- **Notifikasi WhatsApp otomatis** — kabar pesanan diterima, pembayaran lunas, dan setiap perubahan status (termasuk "Siap Diambil") terkirim langsung ke nomor customer.
+  - *Open PO* — pesan per batch (mendukung antrean batch terjadwal, edit batch, dan keterangan pengambilan), wajib transfer + upload bukti pembayaran sebelum pesanan tercatat.
+  - *Jeda Pemesanan* — menonaktifkan checkout sementara (pelanggan tetap bisa melihat-lihat katalog menu).
+- **Kustomisasi varian, paket bundel, & stok terhubung** — mendukung grup varian (single/multi-select, wajib `*`, harga `+/-`, serta preset Kopi & Pandan) dan stok produk opsional yang otomatis menentukan ketersediaan paket bundel serta kembali saat pesanan dibatalkan.
+- **QRIS dinamis & bukti pembayaran foto** — nominal terkunci sesuai total belanja; bukti foto dikompres otomatis di browser (±2 MB) dan diverifikasi kasir.
+- **Notifikasi WhatsApp, Reminder, & Rekap Chef** — pesan otomatis (pesanan diterima, lunas, *Sedang Disiapkan*, *Siap Diambil* dengan lokasi pengambilan kustom, *Reschedule Pengambilan*, dan *Selesai* disertai tautan rating), tombol **Reminder Pengambilan**, serta **Rekap Batch** & **Rekap On-site (Belum Selesai)** yang memisahkan **Minuman** & **Makanan** (`=====`) beserta daftar pemesan untuk dikirim ke grup WA Chef.
+- **Rating & ulasan tanpa login** — link rating unik per pesanan pada pesan WA status *Selesai*, serta carousel ulasan otomatis di halaman utama.
 - **Struk termal Bluetooth** — struk dapur + struk pelanggan (58 mm / 80 mm).
-- **Analitik & ekspor** — omzet, menu terlaris, rekap Excel/CSV.
+- **Analitik & ekspor** — omzet, menu terlaris, ringkasan rating, dan ekspor Excel/CSV.
 
 ## Tech stack
 
@@ -69,7 +71,9 @@ ada di `backend/.env.example` dan `frontend/.env.example`:
 - `ADMIN_EMAIL` / `ADMIN_PASSWORD` — login kasir & admin.
 - `ADMIN_WHATSAPP` — nomor WhatsApp admin.
 - `WA_GATEWAY_URL` — alamat service wa-gateway.
+- `FRONTEND_URL` — alamat web frontend (dipakai untuk membuat tautan halaman rating di pesan WA status *Selesai*).
 - `VITE_API_URL` — alamat backend untuk frontend.
+- `VITE_GFORM_FALLBACK_URL` — link Google Form cadangan opsional bila backend tidak terjangkau.
 
 ## Verifikasi
 

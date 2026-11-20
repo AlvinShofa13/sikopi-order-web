@@ -67,7 +67,7 @@ const steps = [
 const currentStepIndex = computed(() => {
   const st = order.value?.orderStatus
   if (st === 'Selesai') return 3
-  if (st === 'Siap Diambil' || st === 'Siap Disajikan') return 2
+  if (st === 'Siap Diambil' || st === 'Siap Disajikan' || st === 'Reschedule Pengambilan') return 2
   if (st === 'Sedang Disiapkan') return 1
   return 0
 })

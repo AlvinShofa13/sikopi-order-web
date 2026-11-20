@@ -846,7 +846,9 @@ async def _persist_new_order(
     await order_manager.broadcast("NEW_ORDER", serialized)
     # Notifikasi WhatsApp otomatis (fire-and-forget; gagal kirim tak menggagalkan order)
     if phone:
-        background.add_task(_notify_customer, phone, order_created_text(serialized, _brand_name(db)))
+        loc_row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
+        pickup_loc = (loc_row.value if loc_row and loc_row.value else "").strip()
+        background.add_task(_notify_customer, phone, order_created_text(serialized, _brand_name(db), pickup_loc))
     return serialized
 
 
@@ -1064,7 +1066,9 @@ async def update_order_status(
     if bool(ord.is_paid) and not was_paid:
         background.add_task(_notify_customer, phone, payment_verified_text(serialized, brand))
     if payload.order_status and payload.order_status != prev_status:
-        background.add_task(_notify_customer, phone, status_text(serialized, ord.order_status, brand))
+        loc_row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
+        pickup_loc = (loc_row.value if loc_row and loc_row.value else "").strip()
+        background.add_task(_notify_customer, phone, status_text(serialized, ord.order_status, brand, pickup_loc))
     return serialized
 
 

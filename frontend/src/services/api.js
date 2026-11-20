@@ -215,6 +215,9 @@ export const api = {
     },
     async getBatchRecap(batchId) {
       return request(`/preorder/batches/${batchId}/recap`)
+    },
+    async getOnsiteRecap() {
+      return request('/preorder/recap/onsite')
     }
   },
 
@@ -244,6 +247,9 @@ export const api = {
     },
     async sendReceipt(orderId) {
       return request(`/wa/order/${encodeURIComponent(orderId)}/receipt`, { method: 'POST' })
+    },
+    async sendReminder(orderId) {
+      return request(`/wa/order/${encodeURIComponent(orderId)}/reminder`, { method: 'POST' })
     }
   },
 
@@ -313,6 +319,12 @@ export const api = {
   settings: {
     async getBranding() {
       return request('/settings/branding')
+    },
+    async updatePickupLocation(pickup_location) {
+      return request('/settings/pickup-location', {
+        method: 'PUT',
+        body: JSON.stringify({ pickup_location })
+      })
     },
     async updateBranding(payload) {
       return request('/settings/branding', {

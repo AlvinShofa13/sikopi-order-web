@@ -103,9 +103,13 @@ export function orderReceiptText(order, brandName = DEFAULT_BRAND) {
 }
 
 /** Pesan status pesanan yang dikirim kasir lewat WhatsApp. */
-export function orderStatusText(order, status, brandName = DEFAULT_BRAND) {
+export function orderStatusText(order, status, brandName = DEFAULT_BRAND, pickupLocation = '') {
   const brand = brandName || DEFAULT_BRAND
   const head = `*${brand}* — Pesanan *${order.orderId}*`
+  const loc = (order.batch?.notes || pickupLocation || '').trim()
+  const readyLine = loc
+    ? `Silakan ambil pesanan Anda di *${loc}* dan sebutkan kode pesanan di atas. Terima kasih!`
+    : 'Silakan datang ke meja kasir dan sebutkan kode pesanan di atas. Terima kasih!'
   const map = {
     'Diterima & Disiapkan': [
       head,
@@ -121,9 +125,17 @@ export function orderStatusText(order, status, brandName = DEFAULT_BRAND) {
     'Siap Diambil': [
       head,
       '',
-      '*Pesanan Anda SIAP DIAMBIL* di outlet kami.',
+      '*Pesanan Anda SIAP DIAMBIL*.',
       order.batch?.name ? `Batch: ${order.batch.name}` : null,
-      'Silakan datang ke meja kasir dan sebutkan kode pesanan di atas. Terima kasih!'
+      loc ? `Lokasi: *${loc}*` : null,
+      readyLine
+    ],
+    'Reschedule Pengambilan': [
+      head,
+      '',
+      '*Pengambilan pesanan Anda DIJADWAL ULANG (Reschedule Pengambilan).*',
+      order.batch?.name ? `Batch: ${order.batch.name}` : null,
+      'Mohon hubungi kasir/admin untuk konfirmasi jadwal pengambilan terbaru. Terima kasih!'
     ],
     Selesai: [
       head,
@@ -136,6 +148,23 @@ export function orderStatusText(order, status, brandName = DEFAULT_BRAND) {
   }
   const body = map[status] || [head, '', `Status pesanan Anda: ${status}`]
   return body.filter((l) => l !== null).join('\n')
+}
+
+/** Pesan pengingat pengambilan pesanan untuk pelanggan. */
+export function pickupReminderText(order, brandName = DEFAULT_BRAND, pickupLocation = '') {
+  const brand = brandName || DEFAULT_BRAND
+  const loc = (order.batch?.notes || pickupLocation || '').trim()
+  const lines = [
+    `*${brand} — Pengingat Pengambilan Pesanan*`,
+    '',
+    `Halo *${order.customer?.name || order.customerName || 'Pelanggan'}*, pesanan Anda dengan kode *${order.orderId}* sudah siap untuk diambil.`,
+    order.batch?.name ? `Batch: ${order.batch.name}` : null,
+    order.batch?.pickupDate ? `Jadwal ambil: ${new Date(order.batch.pickupDate).toLocaleString('id-ID')}` : null,
+    loc ? `Lokasi pengambilan: *${loc}*` : 'Silakan datang ke outlet kami.',
+    '',
+    'Tunjukkan kode pesanan di atas saat pengambilan. Terima kasih!'
+  ]
+  return lines.filter((l) => l !== null).join('\n')
 }
 
 /** Buka WhatsApp di tab baru; no-op bila link kosong. */
