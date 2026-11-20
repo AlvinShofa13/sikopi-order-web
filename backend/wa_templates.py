@@ -5,7 +5,24 @@ untuk tombol kirim-manual (fallback bila gateway mati). Bila mengubah salah
 satu, ubah keduanya — formatnya sengaja dibuat 1:1 agar mudah dibandingkan.
 """
 
+from datetime import datetime, timedelta, timezone
+
 BRAND_FALLBACK = "SIKopi"
+WIB_TZ = timezone(timedelta(hours=7))
+
+
+def _fmt_wib(iso_val: str) -> str:
+    if not iso_val:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(iso_val).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        wib = dt.astimezone(WIB_TZ)
+        months = ("Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des")
+        return f"{wib.day} {months[wib.month - 1]} {wib.year}, {wib.strftime('%H:%M')} WIB"
+    except Exception:
+        return str(iso_val)
 
 
 def _rupiah(amount) -> str:
@@ -60,7 +77,7 @@ def order_created_text(order: dict, brand: str = BRAND_FALLBACK, pickup_location
     else:
         lines += ["", "Bukti pembayaran Anda sedang diperiksa kasir. Kami kabari lagi setelah terverifikasi."]
     if channel == "preorder" and batch.get("pickupDate"):
-        lines += ["", f"Siap diambil: {batch['pickupDate']}"]
+        lines += ["", f"Siap diambil: {_fmt_wib(batch['pickupDate'])}"]
     if loc:
         lines += [f"Lokasi pengambilan: *{loc}*"]
     lines += ["", "Simpan pesan ini — kode pesanan dipakai untuk cek status."]
@@ -96,7 +113,7 @@ def order_receipt_text(order: dict, brand: str = BRAND_FALLBACK) -> str:
     if channel == "preorder" and batch.get("name"):
         lines.append(f"Batch: {batch['name']}")
     if batch.get("pickupDate"):
-        lines.append(f"Siap diambil: {batch['pickupDate']}")
+        lines.append(f"Siap diambil: {_fmt_wib(batch['pickupDate'])}")
     lines += ["", _item_lines(order.get("items")), ""]
     lines.append(f"Subtotal: {_rupiah(subtotal)}")
     lines.append(f"Total: *{_rupiah(total)}*")
@@ -142,8 +159,10 @@ def status_text(order: dict, status: str, brand: str = BRAND_FALLBACK, pickup_lo
             head,
             "",
             "*Pengambilan pesanan Anda DIJADWAL ULANG (Reschedule Pengambilan).*",
-            f"Batch: {batch['name']}" if batch.get("name") else None,
-            "Mohon hubungi kasir/admin untuk konfirmasi jadwal pengambilan terbaru. Terima kasih!",
+            f"Batch pengambilan baru: *{batch['name']}*" if batch.get("name") else None,
+            f"Jadwal siap diambil: {_fmt_wib(batch['pickupDate'])}" if batch.get("pickupDate") else None,
+            f"Lokasi pengambilan: *{loc}*" if loc else None,
+            "Mohon hubungi kasir/admin bila ada pertanyaan. Terima kasih!",
         ],
         "Selesai": [
             head,
@@ -178,7 +197,7 @@ def pickup_reminder_text(order: dict, brand: str = BRAND_FALLBACK, pickup_locati
         "",
         f"Halo *{cust.get('name') or 'Pelanggan'}*, pesanan Anda dengan kode *{order.get('orderId')}* sudah siap untuk diambil.",
         f"Batch: {batch['name']}" if batch.get("name") else None,
-        f"Jadwal ambil: {batch['pickupDate']}" if batch.get("pickupDate") else None,
+        f"Jadwal ambil: {_fmt_wib(batch['pickupDate'])}" if batch.get("pickupDate") else None,
         f"Lokasi pengambilan: *{loc}*" if loc else "Silakan datang ke outlet kami.",
         "",
         "Tunjukkan kode pesanan di atas saat pengambilan. Terima kasih!",

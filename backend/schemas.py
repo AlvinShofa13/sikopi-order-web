@@ -143,6 +143,7 @@ class OrderStatusUpdate(BaseModel):
     is_paid: Optional[bool] = None
     cash_received: Optional[float] = None
     cash_change: Optional[float] = None
+    batch_id: Optional[int] = None
 
 
 class OrderRatingCreate(BaseModel):

@@ -134,8 +134,12 @@ export function orderStatusText(order, status, brandName = DEFAULT_BRAND, pickup
       head,
       '',
       '*Pengambilan pesanan Anda DIJADWAL ULANG (Reschedule Pengambilan).*',
-      order.batch?.name ? `Batch: ${order.batch.name}` : null,
-      'Mohon hubungi kasir/admin untuk konfirmasi jadwal pengambilan terbaru. Terima kasih!'
+      order.batch?.name ? `Batch pengambilan baru: *${order.batch.name}*` : null,
+      order.batch?.pickupDate
+        ? `Jadwal siap diambil: ${new Date(order.batch.pickupDate).toLocaleString('id-ID')}`
+        : null,
+      loc ? `Lokasi pengambilan: *${loc}*` : null,
+      'Mohon hubungi kasir/admin bila ada pertanyaan. Terima kasih!'
     ],
     Selesai: [
       head,

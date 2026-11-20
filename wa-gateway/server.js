@@ -106,6 +106,17 @@ function resetOldSession() {
   clearAuthDir()
 }
 
+const sentStore = new Map()
+function rememberSentMessage(msg) {
+  const id = msg?.key?.id
+  if (!id || !msg?.message) return
+  sentStore.set(id, msg.message)
+  if (sentStore.size > 200) {
+    const oldestKey = sentStore.keys().next().value
+    sentStore.delete(oldestKey)
+  }
+}
+
 async function connect() {
   try {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
@@ -119,7 +130,9 @@ async function connect() {
       browser: ['SIKopi Gateway', 'Chrome', '1.0'],
       keepAliveIntervalMs: 25000,
       connectTimeoutMs: 60000,
-      markOnlineOnConnect: false
+      markOnlineOnConnect: false,
+      syncFullHistory: false,
+      getMessage: async (key) => sentStore.get(key?.id) || undefined
     })
 
     sock.ev.on('creds.update', saveCreds)
@@ -174,7 +187,15 @@ app.post('/send', async (req, res) => {
   if (!to || !text) return res.status(400).json({ ok: false, error: 'to & text wajib diisi' })
   if (!sock || !connected) return res.status(503).json({ ok: false, error: 'WhatsApp belum terhubung (scan QR dulu)' })
   try {
-    await sock.sendMessage(`${to}@s.whatsapp.net`, { text })
+    let targetJid = `${to}@s.whatsapp.net`
+    try {
+      const checks = await sock.onWhatsApp(targetJid)
+      if (Array.isArray(checks) && checks[0]?.jid) {
+        targetJid = checks[0].jid
+      }
+    } catch { /* fallback ke format standar */ }
+    const sentMsg = await sock.sendMessage(targetJid, { text })
+    rememberSentMessage(sentMsg)
     return res.json({ ok: true })
   } catch (e) {
     console.log('[wa] kirim gagal:', e && e.message)

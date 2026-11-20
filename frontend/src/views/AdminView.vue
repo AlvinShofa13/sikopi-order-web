@@ -1210,8 +1210,67 @@ function getPrepClass(status) {
   return 'prep-cooking'
 }
 
+const rescheduleTargetOrder = ref(null)
+const rescheduleTargetBatchId = ref('')
+const rescheduleSaving = ref(false)
+
+async function openRescheduleModal(order) {
+  if (!order) return
+  if (batchList.value.length === 0) {
+    const res = await api.preorder.listBatches()
+    if (res.ok && Array.isArray(res.data)) batchList.value = res.data
+  }
+  rescheduleTargetOrder.value = order
+  rescheduleTargetBatchId.value = order.batch?.id || batchList.value[0]?.id || ''
+}
+
+function closeRescheduleModal() {
+  rescheduleTargetOrder.value = null
+  rescheduleTargetBatchId.value = ''
+}
+
+async function confirmRescheduleBatch() {
+  const order = rescheduleTargetOrder.value
+  if (!order) return
+  rescheduleSaving.value = true
+  try {
+    const payload = { order_status: 'Reschedule Pengambilan' }
+    if (rescheduleTargetBatchId.value) {
+      payload.batch_id = Number(rescheduleTargetBatchId.value)
+    }
+    const res = await api.orders.updateStatus(order.orderId, payload)
+    if (!res.ok) throw new Error(res.error || 'Gagal menjadwalkan ulang batch pesanan.')
+    const updated = res.data || {}
+    order.orderStatus = updated.orderStatus || 'Reschedule Pengambilan'
+    if (updated.batch !== undefined) order.batch = updated.batch
+    if (updated.channel !== undefined) order.channel = updated.channel
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = order.orderStatus
+      if (updated.batch !== undefined) selectedOrder.value.batch = updated.batch
+      if (updated.channel !== undefined) selectedOrder.value.channel = updated.channel
+    }
+    if (store.broadcastOrderStatusUpdate) {
+      store.broadcastOrderStatusUpdate(order.orderId, { orderStatus: order.orderStatus, batch: order.batch })
+    }
+    showToast(
+      order.batch?.name
+        ? `#${order.orderId} di-reschedule ke ${order.batch.name}.`
+        : `Status #${order.orderId} diubah ke "Reschedule Pengambilan".`
+    )
+    closeRescheduleModal()
+  } catch (err) {
+    showToast(err.message || 'Gagal menjadwalkan ulang pesanan.', 'error')
+  } finally {
+    rescheduleSaving.value = false
+  }
+}
+
 async function handleUpdatePrepStatus(order, newStatus) {
   if (!order) return
+  if (newStatus === 'Reschedule Pengambilan') {
+    await openRescheduleModal(order)
+    return
+  }
   const prevStatus = order.orderStatus
   try {
     order.orderStatus = newStatus
@@ -3142,6 +3201,16 @@ async function handleResetBranding() {
                 </button>
               </div>
 
+              <div v-if="normalizePrepStatus(selectedOrder.orderStatus) === 'Reschedule Pengambilan'" class="reschedule-inline-bar">
+                <span>
+                  Batch saat ini: <strong>{{ selectedOrder.batch?.name || 'Belum masuk batch' }}</strong>
+                </span>
+                <button type="button" class="btn-act btn-detail" @click="openRescheduleModal(selectedOrder)">
+                  <AppIcon name="clock" :size="13" />
+                  <span>Ubah ke Batch Lain</span>
+                </button>
+              </div>
+
               <!-- Kabar status via WhatsApp -->
               <div class="wa-status-block">
                 <span class="wa-status-title">Kabar status via WhatsApp</span>
@@ -3657,6 +3726,39 @@ async function handleResetBranding() {
           </div>
           <div class="modal-footer">
             <button type="button" class="btn-cancel" @click="closeBatchRecap">Tutup</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal: Pilih Batch Tujuan untuk Reschedule Pengambilan -->
+      <div v-if="rescheduleTargetOrder" class="modal-backdrop" @click.self="closeRescheduleModal">
+        <div class="menu-form-card" style="max-width: 460px;">
+          <div class="detail-header">
+            <div>
+              <span class="detail-badge">RESCHEDULE PENGAMBILAN</span>
+              <h3 class="detail-title">#{{ rescheduleTargetOrder.orderId }} — {{ rescheduleTargetOrder.customer?.name }}</h3>
+            </div>
+            <button type="button" class="btn-detail-close" @click="closeRescheduleModal">
+              <AppIcon name="close" :size="18" />
+            </button>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="reschedule-batch-select">Pindahkan ke Batch:</label>
+            <select id="reschedule-batch-select" v-model="rescheduleTargetBatchId" class="form-select">
+              <option value="">(Tetap di batch saat ini / tanpa pindah batch)</option>
+              <option v-for="b in batchList" :key="b.id" :value="b.id">
+                {{ b.name }} ({{ b.status === 'open' ? 'Dibuka' : (b.status === 'scheduled' ? 'Terjadwal' : 'Ditutup') }})
+              </option>
+            </select>
+            <p class="form-hint">
+              Pesanan akan masuk ke rekap batch yang dipilih dan notifikasi WhatsApp otomatis mencantumkan nama & jadwal batch baru.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn-cancel" @click="closeRescheduleModal">Batal</button>
+            <button type="button" class="btn-submit-menu" :disabled="rescheduleSaving" @click="confirmRescheduleBatch">
+              <span>{{ rescheduleSaving ? 'Menyimpan...' : 'Simpan & Reschedule' }}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -7911,5 +8013,20 @@ async function handleResetBranding() {
   background-color: #D97706;
   color: #FFFFFF;
   border-color: #D97706;
+}
+
+.reschedule-inline-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.65rem;
+  padding: 0.6rem 0.85rem;
+  border-radius: 8px;
+  border: 1px solid #F59E0B;
+  background-color: #FFFBEB;
+  font-size: 0.82rem;
+  color: #92400E;
 }
 </style>

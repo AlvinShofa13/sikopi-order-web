@@ -1036,6 +1036,14 @@ async def update_order_status(
 
     was_paid = bool(ord.is_paid)
     prev_status = ord.order_status
+    prev_batch_id = ord.batch_id
+
+    if payload.batch_id is not None:
+        target_batch = db.query(PreorderBatch).filter(PreorderBatch.id == payload.batch_id).first()
+        if not target_batch:
+            raise HTTPException(status_code=404, detail="Batch tujuan tidak ditemukan.")
+        ord.batch_id = target_batch.id
+        ord.channel = CHANNEL_PREORDER
 
     if payload.order_status:
         ord.order_status = payload.order_status
@@ -1056,6 +1064,7 @@ async def update_order_status(
 
     db.commit()
     db.refresh(ord)
+    db.expire(ord, ["batch"])
     serialized = serialize_order(ord)
     await order_manager.broadcast("STATUS_UPDATED", serialized)
 
@@ -1065,7 +1074,9 @@ async def update_order_status(
     phone = ord.customer_phone or ""
     if bool(ord.is_paid) and not was_paid:
         background.add_task(_notify_customer, phone, payment_verified_text(serialized, brand))
-    if payload.order_status and payload.order_status != prev_status:
+    status_changed = bool(payload.order_status and payload.order_status != prev_status)
+    batch_changed = bool(payload.batch_id is not None and ord.batch_id != prev_batch_id)
+    if status_changed or batch_changed:
         loc_row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
         pickup_loc = (loc_row.value if loc_row and loc_row.value else "").strip()
         background.add_task(_notify_customer, phone, status_text(serialized, ord.order_status, brand, pickup_loc))
