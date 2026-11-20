@@ -432,50 +432,59 @@ function closeBatchRecap() {
 function buildChefRecapText() {
   if (!recapData.value) return ''
   const { batch, pickup_location: pickupLoc, summary, items_summary: items, orders } = recapData.value
-  const drinks = (items || []).filter((i) => i.group === 'minuman')
-  const foods = (items || []).filter((i) => i.group !== 'minuman')
   const activeOrders = (orders || []).filter((o) => o.orderStatus !== 'Batal' && o.orderStatus !== 'Dibatalkan')
+  const nowWib = new Date().toLocaleString('id-ID', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Jakarta'
+  })
 
   const lines = [
     `*REKAP PRODUKSI — ${batch.name}*`,
     pickupLoc ? `Lokasi Pengambilan: ${pickupLoc}` : null,
-    `Total Pesanan: ${summary.total_orders} | Total Item: ${summary.total_items_qty} pcs`,
-    '',
-    '===== MINUMAN ====='
+    `Per: ${nowWib} WIB`,
+    `Total Pesanan: ${summary.total_orders} | Total Item: ${summary.total_items_qty} pcs`
   ]
-  if (drinks.length === 0) {
-    lines.push('- (Tidak ada minuman)')
-  } else {
-    for (const it of drinks) {
-      lines.push(`• ${it.name}: ${it.total_qty}x`)
-      for (const v of it.variants_breakdown || []) {
-        lines.push(`   - ${v.qty}x ${v.label}`)
+
+  function appendCustomerSection(sectionTitle, targetGroup) {
+    lines.push('', sectionTitle)
+    let hasRows = false
+    for (const ord of activeOrders) {
+      const matched = (ord.items || []).filter((it) => {
+        const g = it.group || 'makanan'
+        return targetGroup === 'minuman' ? g === 'minuman' : g !== 'minuman'
+      })
+      if (matched.length === 0) continue
+      hasRows = true
+      lines.push(`${ord.customerName}:`)
+      for (const it of matched) {
+        const parsed = parseOrderItemNotes(it.notes)
+        const details = [...parsed.variants, parsed.note].filter(Boolean).join(', ')
+        lines.push(`- ${it.quantity}x ${it.name}${details ? ` (${details})` : ''}`)
       }
+      lines.push('')
+    }
+    if (!hasRows) {
+      lines.push(`- (Tidak ada ${targetGroup})`)
+    } else if (lines[lines.length - 1] === '') {
+      lines.pop()
     }
   }
 
-  lines.push('', '===== MAKANAN =====')
-  if (foods.length === 0) {
-    lines.push('- (Tidak ada makanan)')
-  } else {
-    for (const it of foods) {
-      lines.push(`• ${it.name}: ${it.total_qty}x`)
-      for (const v of it.variants_breakdown || []) {
-        lines.push(`   - ${v.qty}x ${v.label}`)
-      }
-    }
-  }
+  appendCustomerSection('===== MINUMAN =====', 'minuman')
+  appendCustomerSection('===== MAKANAN =====', 'makanan')
 
-  lines.push('', '===== DAFTAR PEMESAN =====')
-  if (activeOrders.length === 0) {
-    lines.push('- (Belum ada pemesan aktif)')
+  lines.push('', '===== TOTAL =====')
+  if (!items || items.length === 0) {
+    lines.push('- (Belum ada item)')
   } else {
-    activeOrders.forEach((o, idx) => {
-      const itemText = (o.items || [])
-        .map((it) => `${it.quantity}x ${it.name}${it.notes ? ` (${it.notes})` : ''}`)
-        .join(', ')
-      lines.push(`${idx + 1}. *${o.customerName}* (${o.orderId}): ${itemText}`)
-    })
+    for (const it of items) {
+      lines.push(`${it.name}: ${it.total_qty}`)
+    }
   }
   return lines.filter((l) => l !== null).join('\n')
 }

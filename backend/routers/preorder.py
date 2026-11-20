@@ -327,6 +327,10 @@ def _build_recap_payload(
             "items": [
                 {
                     "name": it.name,
+                    "group": _classify_recap_group(
+                        cat_by_id.get(it.menu_item_id) or cat_by_name.get(it.name) or "",
+                        it.name,
+                    ),
                     "quantity": int(it.quantity or 0),
                     "notes": it.notes or "",
                     "subtotal": float(it.subtotal or 0.0),
