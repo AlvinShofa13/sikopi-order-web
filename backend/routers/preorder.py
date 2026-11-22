@@ -7,6 +7,8 @@ global. Hanya boleh ada satu batch Open PO berstatus `open` pada satu waktu;
 pesanan preorder otomatis masuk ke batch aktif tersebut.
 """
 
+import json
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -262,6 +264,114 @@ def _classify_recap_group(category: str, name: str) -> str:
     return "makanan"
 
 
+_VARIANT_BLOCK_RE = re.compile(r"\[Varian:\s*(.+?)\](?=\s*(?:\[|$))")
+_BUNDLE_BLOCK_RE = re.compile(r"\[Isi paket:\s*([^\]]+)\]")
+_TRAILING_PRICE_RE = re.compile(r"\s*\([+-]Rp[\d.]+\)\s*$")
+_PREFIX_PRODUCT_RE = re.compile(r"^\[([^\]]+)\]\s*(.*)$")
+_COMP_ITEM_RE = re.compile(r"^(\d+)\s*[x×]\s*(.+)$")
+
+
+def _strip_group_prefix(val: str) -> str:
+    s = val.strip()
+    if ":" in s:
+        s = s.split(":", 1)[1].strip()
+    return s
+
+
+def _expand_order_item_for_chef(
+    it,
+    cat_by_id: dict[str, str],
+    cat_by_name: dict[str, str],
+    menu_by_id: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Pecah item (termasuk paket bundel) ke komponen produksi beserta varian masing-masing produk."""
+    raw_notes = (it.notes or "").strip()
+    prefixed_variants: dict[str, list[str]] = {}
+    general_variants: list[str] = []
+    rest = raw_notes
+
+    vm = _VARIANT_BLOCK_RE.search(rest)
+    if vm:
+        rest = (rest[: vm.start()] + rest[vm.end() :]).strip()
+        inner = _TRAILING_PRICE_RE.sub("", vm.group(1)).strip()
+        for part in inner.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            pm = _PREFIX_PRODUCT_RE.match(part)
+            if pm:
+                prod_key = pm.group(1).strip().lower()
+                val = _strip_group_prefix(pm.group(2))
+                if val:
+                    prefixed_variants.setdefault(prod_key, []).append(val)
+            else:
+                val = _strip_group_prefix(part)
+                if val:
+                    general_variants.append(val)
+
+    components: list[tuple[int, str]] = []
+    bm = _BUNDLE_BLOCK_RE.search(rest)
+    if bm:
+        rest = (rest[: bm.start()] + rest[bm.end() :]).strip()
+        for cpart in bm.group(1).split(","):
+            cm = _COMP_ITEM_RE.match(cpart.strip())
+            if cm:
+                cqty = int(cm.group(1) or 0)
+                cname = cm.group(2).strip()
+                if cqty > 0 and cname:
+                    components.append((cqty, cname))
+    else:
+        menu_obj = menu_by_id.get(it.menu_item_id)
+        if menu_obj and menu_obj.is_bundle and menu_obj.bundle_items:
+            try:
+                blines = json.loads(menu_obj.bundle_items)
+            except (ValueError, TypeError):
+                blines = []
+            for line in blines if isinstance(blines, list) else []:
+                if not isinstance(line, dict):
+                    continue
+                comp_obj = menu_by_id.get((line.get("id") or "").strip())
+                cqty = int(line.get("quantity") or 0)
+                if comp_obj and cqty > 0:
+                    components.append((cqty, comp_obj.name))
+
+    custom_note = rest.strip()
+    order_qty = int(it.quantity or 0)
+
+    if components:
+        expanded = []
+        used_general = False
+        for cqty, cname in components:
+            ccat = cat_by_name.get(cname) or ""
+            cgroup = _classify_recap_group(ccat, cname)
+            cvars = list(prefixed_variants.get(cname.lower(), []))
+            if general_variants and not used_general and (cgroup == "minuman" or len(components) == 1):
+                cvars.extend(general_variants)
+                used_general = True
+            expanded.append({
+                "name": cname,
+                "group": cgroup,
+                "quantity": cqty * order_qty,
+                "variants": cvars,
+                "note": custom_note,
+            })
+        if general_variants and not used_general and expanded:
+            expanded[0]["variants"].extend(general_variants)
+        return expanded
+
+    cat = cat_by_id.get(it.menu_item_id) or cat_by_name.get(it.name) or ""
+    all_vars = list(general_variants)
+    for vals in prefixed_variants.values():
+        all_vars.extend(vals)
+    return [{
+        "name": it.name,
+        "group": _classify_recap_group(cat, it.name),
+        "quantity": order_qty,
+        "variants": all_vars,
+        "note": custom_note,
+    }]
+
+
 def _build_recap_payload(
     db: Session,
     orders: list[Order],
@@ -272,9 +382,10 @@ def _build_recap_payload(
     """Susun payload rekap pesanan (dipakai bersama oleh rekap per batch dan rekap On-site)."""
     loc_row = db.query(AppSetting).filter(AppSetting.key == "pickup_location").first()
     global_pickup_loc = (loc_row.value if loc_row and loc_row.value else "").strip()
-    menu_rows = db.query(MenuItem.id, MenuItem.name, MenuItem.category).all()
+    menu_rows = db.query(MenuItem).all()
     cat_by_id = {m.id: (m.category or "") for m in menu_rows}
     cat_by_name = {m.name: (m.category or "") for m in menu_rows}
+    menu_by_id = {m.id: m for m in menu_rows}
 
     active_orders = [o for o in orders if (o.order_status or "") not in ("Batal", "Dibatalkan")]
     cancelled_count = len(orders) - len(active_orders)
@@ -284,6 +395,7 @@ def _build_recap_payload(
     paid_revenue = sum(float(o.total or 0.0) for o in active_orders if o.is_paid)
 
     item_map: dict[str, dict[str, Any]] = {}
+    chef_total_map: dict[str, dict[str, Any]] = {}
     for ord in active_orders:
         for it in ord.items:
             cat = cat_by_id.get(it.menu_item_id) or cat_by_name.get(it.name) or ""
@@ -297,6 +409,13 @@ def _build_recap_payload(
             entry["total_revenue"] += float(it.subtotal or 0.0)
             note_key = (it.notes or "").strip() or "Standar (tanpa varian/catatan)"
             entry["variants_map"][note_key] = entry["variants_map"].get(note_key, 0) + qty
+
+            for prod in _expand_order_item_for_chef(it, cat_by_id, cat_by_name, menu_by_id):
+                ct = chef_total_map.setdefault(
+                    prod["name"],
+                    {"name": prod["name"], "group": prod["group"], "total_qty": 0},
+                )
+                ct["total_qty"] += int(prod["quantity"] or 0)
 
     items_summary = []
     for entry in sorted(item_map.values(), key=lambda x: (-x["total_qty"], x["name"])):
@@ -313,8 +432,17 @@ def _build_recap_payload(
             "variants_breakdown": breakdown,
         })
 
-    orders_brief = [
-        {
+    chef_totals = sorted(
+        chef_total_map.values(),
+        key=lambda x: (0 if x["group"] == "minuman" else 1, -x["total_qty"], x["name"]),
+    )
+
+    orders_brief = []
+    for o in orders:
+        prod_items = []
+        for it in o.items:
+            prod_items.extend(_expand_order_item_for_chef(it, cat_by_id, cat_by_name, menu_by_id))
+        orders_brief.append({
             "orderId": o.order_id,
             "createdAt": _utc_iso(o.created_at) or "",
             "customerName": o.customer_name,
@@ -337,9 +465,8 @@ def _build_recap_payload(
                 }
                 for it in o.items
             ],
-        }
-        for o in orders
-    ]
+            "production_items": prod_items,
+        })
 
     batch_data = serialize_batch(batch) if batch else {"id": None, "name": title or "On-site (Belum Selesai)"}
     pickup_loc = ((batch.notes or "").strip() if batch else "") or global_pickup_loc
@@ -357,6 +484,7 @@ def _build_recap_payload(
             "total_items_qty": sum(i["total_qty"] for i in items_summary),
         },
         "items_summary": items_summary,
+        "chef_totals": chef_totals,
         "orders": orders_brief,
     }
 

@@ -443,7 +443,7 @@ function closeBatchRecap() {
 
 function buildChefRecapText() {
   if (!recapData.value) return ''
-  const { batch, pickup_location: pickupLoc, summary, items_summary: items, orders } = recapData.value
+  const { batch, pickup_location: pickupLoc, summary, items_summary: items, chef_totals: chefTotals, orders } = recapData.value
   const activeOrders = (orders || []).filter((o) => o.orderStatus !== 'Batal' && o.orderStatus !== 'Dibatalkan')
   const nowWib = new Date().toLocaleString('id-ID', {
     weekday: 'long',
@@ -466,7 +466,10 @@ function buildChefRecapText() {
     lines.push('', sectionTitle)
     let hasRows = false
     for (const ord of activeOrders) {
-      const matched = (ord.items || []).filter((it) => {
+      const sourceItems = Array.isArray(ord.production_items) && ord.production_items.length > 0
+        ? ord.production_items
+        : (ord.items || [])
+      const matched = sourceItems.filter((it) => {
         const g = it.group || 'makanan'
         return targetGroup === 'minuman' ? g === 'minuman' : g !== 'minuman'
       })
@@ -474,8 +477,13 @@ function buildChefRecapText() {
       hasRows = true
       lines.push(`${ord.customerName}:`)
       for (const it of matched) {
-        const parsed = parseOrderItemNotes(it.notes)
-        const details = [...parsed.variants, parsed.note].filter(Boolean).join(', ')
+        let details = ''
+        if (Array.isArray(it.variants) || 'note' in it) {
+          details = [...(it.variants || []), it.note || ''].filter(Boolean).join(', ')
+        } else {
+          const parsed = parseOrderItemNotes(it.notes)
+          details = [...parsed.variants, parsed.note].filter(Boolean).join(', ')
+        }
         lines.push(`- ${it.quantity}x ${it.name}${details ? ` (${details})` : ''}`)
       }
       lines.push('')
@@ -490,11 +498,12 @@ function buildChefRecapText() {
   appendCustomerSection('===== MINUMAN =====', 'minuman')
   appendCustomerSection('===== MAKANAN =====', 'makanan')
 
+  const totalsList = Array.isArray(chefTotals) && chefTotals.length > 0 ? chefTotals : (items || [])
   lines.push('', '===== TOTAL =====')
-  if (!items || items.length === 0) {
+  if (totalsList.length === 0) {
     lines.push('- (Belum ada item)')
   } else {
-    for (const it of items) {
+    for (const it of totalsList) {
       lines.push(`${it.name}: ${it.total_qty}`)
     }
   }
