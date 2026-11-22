@@ -72,6 +72,9 @@ const silentLogger = {
 }
 
 let consecutiveFails = 0
+let badSessionFails = 0
+let isConnecting = false
+let cachedVersion = null
 let heartbeatTimer = null
 
 function stopHeartbeat() {
@@ -81,27 +84,40 @@ function stopHeartbeat() {
   }
 }
 
+function cleanupSocket() {
+  stopHeartbeat()
+  if (!sock) return
+  try {
+    sock.ev?.removeAllListeners()
+  } catch { /* abaikan */ }
+  try {
+    sock.ws?.close?.()
+  } catch { /* abaikan */ }
+  try {
+    sock.end?.()
+  } catch { /* abaikan */ }
+  sock = null
+}
+
 function startHeartbeat() {
   stopHeartbeat()
-  heartbeatTimer = setInterval(async () => {
+  // Watchdog ringan: andalkan ping native Baileys (keepAliveIntervalMs: 25s),
+  // dan cek setiap 60 detik apakah WebSocket diam-diam sudah tertutup/setengah putus.
+  heartbeatTimer = setInterval(() => {
     if (!connected || !sock) return
-    try {
-      await sock.sendPresenceUpdate('available')
-    } catch {
+    const wsState = sock.ws?.readyState
+    // 1 = OPEN; selain OPEN (CLOSING=2, CLOSED=3) berarti socket sudah mati diam-diam.
+    if (typeof wsState === 'number' && wsState !== 1) {
+      console.log(`[wa] watchdog mendeteksi socket tidak aktif (readyState=${wsState}) — reconnect...`)
       connected = false
-      stopHeartbeat()
-      scheduleConnect(3000)
+      cleanupSocket()
+      scheduleConnect(2000)
     }
-  }, 4 * 60 * 1000)
+  }, 60 * 1000)
 }
 
 function resetOldSession() {
-  stopHeartbeat()
-  try {
-    sock?.ev?.removeAllListeners()
-    sock?.end?.()
-  } catch { /* abaikan */ }
-  sock = null
+  cleanupSocket()
   lastQr = null
   clearAuthDir()
 }
@@ -117,12 +133,29 @@ function rememberSentMessage(msg) {
   }
 }
 
-async function connect() {
+async function resolveWaVersion() {
+  if (cachedVersion) return cachedVersion
   try {
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
     const { version } = await fetchLatestBaileysVersion()
+    cachedVersion = version
+    return version
+  } catch (err) {
+    console.log('[wa] gagal fetch versi terbaru, pakai fallback default:', err && err.message)
+    return [2, 3000, 1015901307]
+  }
+}
 
-    sock = makeWASocket({
+async function connect() {
+  if (isConnecting) return
+  isConnecting = true
+  try {
+    // Pastikan tidak pernah ada dua socket Baileys aktif bersamaan (mencegah 440/500/401).
+    cleanupSocket()
+
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+    const version = await resolveWaVersion()
+
+    const activeSock = makeWASocket({
       version,
       auth: state,
       logger: silentLogger,
@@ -130,14 +163,19 @@ async function connect() {
       browser: ['SIKopi Gateway', 'Chrome', '1.0'],
       keepAliveIntervalMs: 25000,
       connectTimeoutMs: 60000,
+      defaultQueryTimeoutMs: 60000,
       markOnlineOnConnect: false,
       syncFullHistory: false,
       getMessage: async (key) => sentStore.get(key?.id) || undefined
     })
+    sock = activeSock
 
-    sock.ev.on('creds.update', saveCreds)
+    activeSock.ev.on('creds.update', saveCreds)
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    activeSock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+      // Abaikan event terlambat dari socket lama yang sudah diganti.
+      if (sock !== activeSock) return
+
       if (qr) {
         lastQr = await QRCode.toDataURL(qr, { width: 280, margin: 1 })
         connected = false
@@ -146,6 +184,7 @@ async function connect() {
         connected = true
         lastQr = null
         consecutiveFails = 0
+        badSessionFails = 0
         startHeartbeat()
         console.log('[wa] terhubung sebagai perangkat tertaut')
       }
@@ -154,18 +193,31 @@ async function connect() {
         stopHeartbeat()
         consecutiveFails += 1
         const code = lastDisconnect?.error?.output?.statusCode
-        const isAuthInvalid =
-          code === DisconnectReason.loggedOut ||
-          code === DisconnectReason.badSession ||
-          code === DisconnectReason.multideviceMismatch
 
-        if (isAuthInvalid) {
+        if (code === DisconnectReason.badSession) {
+          badSessionFails += 1
+        } else {
+          badSessionFails = 0
+        }
+
+        // Hapus sesi ./auth HANYA bila benar-benar loggedOut (401), multideviceMismatch (411),
+        // atau badSession (500) berulang 5x berturut-turut. Gangguan jaringan/idle/sleep TIDAK
+        // menghapus sesi sehingga reconnect otomatis tanpa scan QR ulang.
+        const mustResetAuth =
+          code === DisconnectReason.loggedOut ||
+          code === DisconnectReason.multideviceMismatch ||
+          badSessionFails >= 5
+
+        if (mustResetAuth) {
           consecutiveFails = 0
+          badSessionFails = 0
           resetOldSession()
           console.log(`[wa] sesi tidak valid (code ${code}) — sesi dibersihkan, membuat QR baru...`)
-          scheduleConnect(1000)
+          scheduleConnect(1500)
         } else {
-          const delay = Math.min(15000, consecutiveFails * 5000)
+          const delay = code === DisconnectReason.restartRequired
+            ? 1500
+            : Math.min(15000, consecutiveFails * 3000)
           console.log(`[wa] koneksi terputus sementara (code ${code}) — mencoba reconnect (${delay / 1000}s)...`)
           scheduleConnect(delay)
         }
@@ -175,9 +227,11 @@ async function connect() {
     connected = false
     stopHeartbeat()
     consecutiveFails += 1
-    const delay = Math.min(15000, consecutiveFails * 5000)
+    const delay = Math.min(15000, consecutiveFails * 3000)
     console.log('[wa] gagal inisialisasi koneksi:', err && err.message)
     scheduleConnect(delay)
+  } finally {
+    isConnecting = false
   }
 }
 
@@ -211,10 +265,10 @@ app.post('/logout', async (_req, res) => {
   try {
     await sock?.logout()
   } catch { /* abaikan */ }
-  sock = null
   connected = false
-  lastQr = null
-  clearAuthDir()
+  consecutiveFails = 0
+  badSessionFails = 0
+  resetOldSession()
   scheduleConnect(1500)
   res.json({ ok: true })
 })

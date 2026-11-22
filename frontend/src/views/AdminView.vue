@@ -184,8 +184,17 @@ function stopRealtimeSync() {
   isRealtimeActive.value = false
 }
 
+function handleVisibilityChange() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible' && adminStore.isAuthenticated) {
+    refreshWaStatus()
+  }
+}
+
 onMounted(() => {
   savedPrinterName.value = getSavedPrinterName()
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+  }
   if (adminStore.isAuthenticated) {
     store.fetchMenuFromAPI()
     store.fetchCategories()
@@ -197,6 +206,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }
   stopRealtimeSync()
   if (waPollTimer.value) {
     clearInterval(waPollTimer.value)
@@ -549,24 +561,30 @@ async function switchMode(mode) {
 
 // ---- Gateway WhatsApp (Baileys): status pairing ----
 const waPollTimer = ref(null)
+const waPollIntervalMs = ref(0)
 
-async function refreshWaStatus() {
-  await store.fetchWaStatus()
-  // Polling QR hanya selama belum terhubung & panel terbuka
-  if (!store.waConnected && !waPollTimer.value) {
-    waPollTimer.value = setInterval(() => {
-      if (store.waConnected && waPollTimer.value) {
-        clearInterval(waPollTimer.value)
-        waPollTimer.value = null
-        return
-      }
-      store.fetchWaStatus()
-    }, 5000)
-  }
-  if (store.waConnected && waPollTimer.value) {
+function scheduleWaPoll(intervalMs) {
+  if (waPollTimer.value && waPollIntervalMs.value === intervalMs) return
+  if (waPollTimer.value) {
     clearInterval(waPollTimer.value)
     waPollTimer.value = null
   }
+  waPollIntervalMs.value = intervalMs
+  waPollTimer.value = setInterval(async () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+    if (!adminStore.isAuthenticated) return
+    await store.fetchWaStatus()
+    const nextMs = store.waConnected ? 30000 : 5000
+    if (nextMs !== waPollIntervalMs.value) {
+      scheduleWaPoll(nextMs)
+    }
+  }, intervalMs)
+}
+
+async function refreshWaStatus() {
+  await store.fetchWaStatus()
+  // 5 detik saat menunggu QR pairing; 30 detik ringan saat sudah terhubung agar status selalu sinkron
+  scheduleWaPoll(store.waConnected ? 30000 : 5000)
 }
 
 // Lepas sesi WA yang sudah pairing dari panel admin (tanpa buka WA di HP)
