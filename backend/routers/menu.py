@@ -7,7 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from auth_dep import require_admin
 from database import get_db
-from models import MenuItem, OrderItem
+from models import MenuItem, Order, OrderItem
 from routers.uploads import MAX_MENU_BYTES, MENU_DIR, save_image
 from schemas import MenuItemCreate, MenuItemUpdate, MenuItemResponse
 
@@ -185,7 +185,11 @@ def get_all_menu(db: Session = Depends(get_db)):
     """Retrieve all menu items with aggregated total_sold count and bundle-aware stock."""
     sales_data = (
         db.query(OrderItem.menu_item_id, func.coalesce(func.sum(OrderItem.quantity), 0))
-        .filter(OrderItem.menu_item_id.isnot(None))
+        .join(Order, OrderItem.order_id == Order.order_id)
+        .filter(
+            OrderItem.menu_item_id.isnot(None),
+            func.coalesce(Order.order_status, "").notin_(("Batal", "Dibatalkan")),
+        )
         .group_by(OrderItem.menu_item_id)
         .all()
     )
@@ -204,7 +208,11 @@ def get_menu_by_id(menu_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Menu tidak ditemukan.")
     sold = (
         db.query(func.coalesce(func.sum(OrderItem.quantity), 0))
-        .filter(OrderItem.menu_item_id == menu_id)
+        .join(Order, OrderItem.order_id == Order.order_id)
+        .filter(
+            OrderItem.menu_item_id == menu_id,
+            func.coalesce(Order.order_status, "").notin_(("Batal", "Dibatalkan")),
+        )
         .scalar()
     )
     all_items = db.query(MenuItem).all()

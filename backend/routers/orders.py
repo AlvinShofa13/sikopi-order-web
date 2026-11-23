@@ -43,6 +43,7 @@ PAYMENT_LABELS = {
     "cash": "Bayar di Kasir (Tunai / EDC)",
 }
 MAX_ORDER_LOOKUPS_PER_IP = 60
+CANCELLED_STATUSES = ("Batal", "Dibatalkan")
 
 
 def _brand_name(db: Session) -> str:
@@ -346,10 +347,23 @@ def _export_rows(db: Session):
 
 @router.get("/stats")
 def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(require_admin)):
-    """Aggregated sales analytics (Admin)."""
-    total_orders = db.query(func.count(Order.id)).scalar() or 0
-    total_revenue = db.query(func.coalesce(func.sum(Order.total), 0.0)).scalar() or 0.0
-    total_portions = db.query(func.coalesce(func.sum(OrderItem.quantity), 0)).scalar() or 0
+    """Aggregated sales analytics (Admin). Pesanan batal tidak dihitung ke omset aktif."""
+    active_filter = func.coalesce(Order.order_status, "").notin_(CANCELLED_STATUSES)
+    cancelled_filter = Order.order_status.in_(CANCELLED_STATUSES)
+
+    total_orders = db.query(func.count(Order.id)).filter(active_filter).scalar() or 0
+    total_revenue = db.query(func.coalesce(func.sum(Order.total), 0.0)).filter(active_filter).scalar() or 0.0
+    total_portions = (
+        db.query(func.coalesce(func.sum(OrderItem.quantity), 0))
+        .join(Order, OrderItem.order_id == Order.order_id)
+        .filter(active_filter)
+        .scalar()
+        or 0
+    )
+    cancelled_orders = db.query(func.count(Order.id)).filter(cancelled_filter).scalar() or 0
+    cancelled_revenue = (
+        db.query(func.coalesce(func.sum(Order.total), 0.0)).filter(cancelled_filter).scalar() or 0.0
+    )
 
     top_menus_q = (
         db.query(
@@ -358,6 +372,8 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
             func.sum(OrderItem.subtotal).label("revenue"),
             func.count(func.distinct(OrderItem.order_id)).label("orders"),
         )
+        .join(Order, OrderItem.order_id == Order.order_id)
+        .filter(active_filter)
         .group_by(OrderItem.name)
         .order_by(func.sum(OrderItem.quantity).desc())
         .limit(10)
@@ -374,6 +390,7 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
             func.count(Order.id).label("count"),
             func.coalesce(func.sum(Order.total), 0.0).label("revenue"),
         )
+        .filter(active_filter)
         .group_by(Order.payment_method)
         .all()
     )
@@ -393,6 +410,7 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
 
     chan_q = (
         db.query(Order.channel.label("channel"), func.count(Order.id).label("count"))
+        .filter(active_filter)
         .group_by(Order.channel)
         .all()
     )
@@ -408,9 +426,11 @@ def get_sales_stats(db: Session = Depends(get_db), _admin: bool = Depends(requir
 
     return {
         "summary": {
-            "total_orders": total_orders,
+            "total_orders": int(total_orders),
             "total_revenue": float(total_revenue),
             "total_portions": int(total_portions),
+            "cancelled_orders": int(cancelled_orders),
+            "cancelled_revenue": float(cancelled_revenue),
         },
         "top_menus": top_menus,
         "payment_methods": payment_methods,
@@ -665,7 +685,11 @@ def _collect_stock_demands(db: Session, items) -> dict[str, int]:
     """Hitung total kebutuhan stok per menu_item_id (menguraikan paket bundel menjadi komponennya)."""
     demands: dict[str, int] = {}
     for it in items:
-        item_id = (getattr(it, "id", None) or getattr(it, "menu_item_id", None) or "").strip()
+        if hasattr(it, "menu_item_id"):
+            raw_id = getattr(it, "menu_item_id", None)
+        else:
+            raw_id = getattr(it, "id", None)
+        item_id = raw_id.strip() if isinstance(raw_id, str) else ""
         qty = int(getattr(it, "quantity", 0) or 0)
         if not item_id or qty <= 0:
             continue
@@ -711,7 +735,7 @@ def _validate_and_deduct_stock(db: Session, items) -> None:
 
 def _adjust_stock_on_status_change(db: Session, ord: Order, prev_status: str, new_status: str) -> None:
     """Kembalikan stok bila pesanan dibatalkan; kurangi lagi bila dipulihkan dari batal."""
-    cancel_states = {"Batal", "Dibatalkan"}
+    cancel_states = set(CANCELLED_STATUSES)
     was_cancelled = (prev_status or "") in cancel_states
     is_cancelled = (new_status or "") in cancel_states
     if was_cancelled == is_cancelled:

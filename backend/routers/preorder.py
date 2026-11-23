@@ -388,7 +388,9 @@ def _build_recap_payload(
     menu_by_id = {m.id: m for m in menu_rows}
 
     active_orders = [o for o in orders if (o.order_status or "") not in ("Batal", "Dibatalkan")]
-    cancelled_count = len(orders) - len(active_orders)
+    cancelled_orders_list = [o for o in orders if (o.order_status or "") in ("Batal", "Dibatalkan")]
+    cancelled_count = len(cancelled_orders_list)
+    cancelled_revenue = sum(float(o.total or 0.0) for o in cancelled_orders_list)
     paid_orders = sum(1 for o in active_orders if o.is_paid)
     unpaid_orders = len(active_orders) - paid_orders
     total_revenue = sum(float(o.total or 0.0) for o in active_orders)
@@ -477,6 +479,7 @@ def _build_recap_payload(
         "summary": {
             "total_orders": len(active_orders),
             "cancelled_orders": cancelled_count,
+            "cancelled_revenue": cancelled_revenue,
             "paid_orders": paid_orders,
             "unpaid_orders": unpaid_orders,
             "total_revenue": total_revenue,

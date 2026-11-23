@@ -4,9 +4,15 @@
  * Used as client-side fallback when GET /orders/stats is unreachable.
  */
 
+export function isOrderCancelled(order) {
+  const s = order?.orderStatus || ''
+  return s === 'Batal' || s === 'Dibatalkan'
+}
+
 export function topMenus(orders = [], limit = 10) {
   const acc = new Map()
   for (const ord of orders || []) {
+    if (isOrderCancelled(ord)) continue
     for (const it of ord.items || []) {
       const name = it.name || '-'
       const cur = acc.get(name) || { name, qty: 0, revenue: 0, orders: 0 }
@@ -20,9 +26,10 @@ export function topMenus(orders = [], limit = 10) {
 }
 
 export function paymentBreakdown(orders = []) {
-  const total = (orders || []).length
+  const active = (orders || []).filter((ord) => !isOrderCancelled(ord))
+  const total = active.length
   const acc = new Map()
-  for (const ord of orders || []) {
+  for (const ord of active) {
     const raw = (ord.payment?.method || 'unknown').toLowerCase()
     const label =
       raw === 'transfer' ? 'Transfer QRIS + Bukti'

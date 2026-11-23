@@ -23,7 +23,7 @@ from database import Base
 from models import Category, MenuItem, PreorderBatch
 from routers.categories import create_category, delete_category, get_all_categories, update_category
 from routers.menu import create_menu_item
-from routers.orders import create_order, create_pos_order, new_order_code, normalize_phone, update_order_status
+from routers.orders import create_order, create_pos_order, get_sales_stats, new_order_code, normalize_phone, update_order_status
 from routers.preorder import MODE_POS, MODE_PREORDER, get_active_mode, set_active_mode
 from schemas import CategoryCreate, CategoryUpdate, MenuItemCreate, OrderCreate, OrderStatusUpdate, PosOrderCreate
 from wa_templates import order_created_text, order_receipt_text, payment_verified_text, status_text
@@ -142,6 +142,30 @@ def run():
     check("koreksi tidak mengirim WA", len(SENT) == 0)
     relunas = patch(db, "SK-2K9QW4Z7", is_paid=True)
     check("lunas lagi -> kirim WA lagi", len(SENT) == 1 and relunas["payment"]["paid"] is True)
+    SENT.clear()
+
+    print("\n[4c] Batalkan & pulihkan pesanan lunas (stok + omset + total batal)")
+    kopi_item = db.query(MenuItem).filter(MenuItem.id == "menu-kopi").first()
+    kopi_item.stock = 10
+    db.commit()
+    cancelled = patch(db, "SK-2K9QW4Z7", order_status="Batal")
+    db.refresh(kopi_item)
+    check("status berubah ke Batal", cancelled["orderStatus"] == "Batal")
+    check("stok kembali bertambah (+2)", kopi_item.stock == 12)
+    stats_after_cancel = get_sales_stats(db, True)
+    check("omset aktif berkurang jadi 0", stats_after_cancel["summary"]["total_revenue"] == 0.0)
+    check("jumlah pesanan aktif jadi 0", stats_after_cancel["summary"]["total_orders"] == 0)
+    check("jumlah pesanan batal tercatat (1)", stats_after_cancel["summary"]["cancelled_orders"] == 1)
+    check("nominal uang batal tercatat (50000)", stats_after_cancel["summary"]["cancelled_revenue"] == 50000.0)
+    restored = patch(db, "SK-2K9QW4Z7", order_status="Sedang Disiapkan")
+    db.refresh(kopi_item)
+    check("pesanan dipulihkan dari Batal", restored["orderStatus"] == "Sedang Disiapkan")
+    check("stok berkurang kembali (-2)", kopi_item.stock == 10)
+    stats_after_restore = get_sales_stats(db, True)
+    check("omset aktif kembali 50000", stats_after_restore["summary"]["total_revenue"] == 50000.0)
+    check("jumlah pesanan batal kembali 0", stats_after_restore["summary"]["cancelled_orders"] == 0)
+    kopi_item.stock = None
+    db.commit()
     SENT.clear()
 
     print("\n[5] WA gagal tidak menggagalkan order")

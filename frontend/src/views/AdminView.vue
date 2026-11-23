@@ -8,7 +8,7 @@ import AdminPosPanel from '@/components/AdminPosPanel.vue'
 import { api } from '@/services/api'
 import { formatRupiah, isCustomImage, createToast, parseBundleItems, bundleContentsLabel, bundleSavings, parseVariants, parseVariantGroups, variantsLabel } from '@/utils/format'
 import { orderStatusText, pickupReminderText, waLink } from '@/utils/wa'
-import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl } from '@/utils/salesAnalytics'
+import { topMenus, paymentBreakdown, ordersToCsv, downloadFromUrl, isOrderCancelled } from '@/utils/salesAnalytics'
 import { isBluetoothSupported, printReceiptViaBluetooth, getSavedPrinterName, forgetBluetoothPrinter } from '@/utils/bluetoothPrinter'
 import { generateDynamicQrisPayload, generateQrisDataUrl, getQrisImageUrl } from '@/utils/qris'
 
@@ -227,12 +227,12 @@ const statsLoading = ref(false)
 const isExporting = ref(false)
 
 const analyticsTopMenus = computed(() => {
-  if (salesStats.value?.top_menus?.length) return salesStats.value.top_menus
+  if (salesStats.value && Array.isArray(salesStats.value.top_menus)) return salesStats.value.top_menus
   return topMenus(orderHistory.value, 10)
 })
 
 const analyticsPayments = computed(() => {
-  if (salesStats.value?.payment_methods?.length) return salesStats.value.payment_methods
+  if (salesStats.value && Array.isArray(salesStats.value.payment_methods)) return salesStats.value.payment_methods
   return paymentBreakdown(orderHistory.value)
 })
 
@@ -310,14 +310,32 @@ async function handleExport(format) {
   }
 }
 
+const activeOrderHistory = computed(() => {
+  return orderHistory.value.filter(ord => !isOrderCancelled(ord))
+})
+
+const cancelledOrderHistory = computed(() => {
+  return orderHistory.value.filter(ord => isOrderCancelled(ord))
+})
+
 const totalRevenue = computed(() => {
-  return orderHistory.value.reduce((sum, ord) => sum + (ord.breakdown?.total || 0), 0)
+  return activeOrderHistory.value.reduce((sum, ord) => sum + (ord.breakdown?.total || 0), 0)
+})
+
+const cancelledOrdersCount = computed(() => cancelledOrderHistory.value.length)
+
+const cancelledRevenue = computed(() => {
+  return cancelledOrderHistory.value.reduce((sum, ord) => sum + (ord.breakdown?.total || 0), 0)
 })
 
 const totalPortionsSold = computed(() => {
-  return orderHistory.value.reduce((sum, ord) => {
+  return activeOrderHistory.value.reduce((sum, ord) => {
     return sum + (ord.items?.reduce((s, it) => s + (it.quantity || 1), 0) || 0)
   }, 0)
+})
+
+const unpaidActiveOrdersCount = computed(() => {
+  return activeOrderHistory.value.filter(o => !o.payment?.paid).length
 })
 
 const filteredOrders = computed(() => {
@@ -1333,6 +1351,7 @@ async function handleUpdatePrepStatus(order, newStatus) {
 async function handleCancelOrder(order) {
   if (!order) return
   if (!confirm(`Batalkan pesanan #${order.orderId} (${order.customer?.name || 'Pelanggan'})? Status akan diubah menjadi 'Batal' dan data tetap tersimpan di riwayat pesanan.`)) return
+  const prevStatus = order.orderStatus
   try {
     order.orderStatus = 'Batal'
     if (selectedOrder.value?.orderId === order.orderId) {
@@ -1344,8 +1363,13 @@ async function handleCancelOrder(order) {
     if (store.broadcastOrderStatusUpdate) {
       store.broadcastOrderStatusUpdate(order.orderId, { orderStatus: 'Batal' })
     }
-    showToast(`Pesanan #${order.orderId} dibatalkan. Data tetap tersimpan di riwayat.`)
+    if (salesStats.value) fetchSalesStats()
+    showToast(`Pesanan #${order.orderId} dibatalkan. Omset & stok otomatis disesuaikan.`)
   } catch (err) {
+    order.orderStatus = prevStatus
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = prevStatus
+    }
     showToast(err.message || 'Gagal membatalkan pesanan.', 'error')
   }
 }
@@ -1353,6 +1377,7 @@ async function handleCancelOrder(order) {
 // 2. Aktifkan kembali pesanan yang sebelumnya dibatalkan
 async function handleRestoreOrder(order) {
   if (!order) return
+  const prevStatus = order.orderStatus
   try {
     order.orderStatus = 'Sedang Disiapkan'
     if (selectedOrder.value?.orderId === order.orderId) {
@@ -1364,8 +1389,13 @@ async function handleRestoreOrder(order) {
     if (store.broadcastOrderStatusUpdate) {
       store.broadcastOrderStatusUpdate(order.orderId, { orderStatus: 'Sedang Disiapkan' })
     }
+    if (salesStats.value) fetchSalesStats()
     showToast(`Pesanan #${order.orderId} diaktifkan kembali.`)
   } catch (err) {
+    order.orderStatus = prevStatus
+    if (selectedOrder.value?.orderId === order.orderId) {
+      selectedOrder.value.orderStatus = prevStatus
+    }
     showToast(err.message || 'Gagal mengaktifkan pesanan.', 'error')
   }
 }
@@ -1938,8 +1968,11 @@ async function handleResetBranding() {
               <AppIcon name="receipt" :size="20" />
             </div>
             <div class="stat-info">
-              <span class="stat-label">Total Pesanan Masuk</span>
-              <strong class="stat-val font-mono">{{ orderHistory.length }}</strong>
+              <span class="stat-label">Pesanan Aktif</span>
+              <strong class="stat-val font-mono">{{ activeOrderHistory.length }}</strong>
+              <span v-if="cancelledOrdersCount > 0" class="stat-sub">
+                dari {{ orderHistory.length }} total masuk
+              </span>
             </div>
           </div>
 
@@ -1948,8 +1981,11 @@ async function handleResetBranding() {
               <AppIcon name="cash" :size="20" />
             </div>
             <div class="stat-info">
-              <span class="stat-label">Total Omset Transaksi</span>
+              <span class="stat-label">Total Omset Bersih</span>
               <strong class="stat-val font-mono">{{ formatRupiah(totalRevenue) }}</strong>
+              <span v-if="cancelledRevenue > 0" class="stat-sub stat-sub-danger font-mono">
+                -{{ formatRupiah(cancelledRevenue) }} batal
+              </span>
             </div>
           </div>
 
@@ -1969,7 +2005,18 @@ async function handleResetBranding() {
             </div>
             <div class="stat-info">
               <span class="stat-label">Belum Lunas</span>
-              <strong class="stat-val font-mono">{{ orderHistory.filter(o => !o.payment?.paid).length }}</strong>
+              <strong class="stat-val font-mono">{{ unpaidActiveOrdersCount }}</strong>
+            </div>
+          </div>
+
+          <div class="stat-card stat-card-cancelled">
+            <div class="stat-icon-wrap bg-danger-soft">
+              <AppIcon name="close" :size="20" />
+            </div>
+            <div class="stat-info">
+              <span class="stat-label">Pesanan Dibatalkan</span>
+              <strong class="stat-val stat-val-danger font-mono">{{ cancelledOrdersCount }} Pesanan</strong>
+              <span class="stat-sub stat-sub-danger font-mono">{{ formatRupiah(cancelledRevenue) }}</span>
             </div>
           </div>
         </section>
@@ -3676,7 +3723,7 @@ async function handleResetBranding() {
                   <span class="recap-kpi-label">Pesanan Aktif</span>
                   <strong class="recap-kpi-val">{{ recapData.summary.total_orders }}</strong>
                   <span v-if="recapData.summary.cancelled_orders > 0" class="recap-kpi-sub">
-                    ({{ recapData.summary.cancelled_orders }} batal)
+                    ({{ recapData.summary.cancelled_orders }} batal · {{ formatRupiah(recapData.summary.cancelled_revenue || 0) }})
                   </span>
                 </div>
                 <div class="recap-kpi-box">
@@ -4285,8 +4332,8 @@ async function handleResetBranding() {
 /* Stats Grid */
 .admin-stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+  gap: 1rem;
   margin-bottom: 2rem;
 }
 
@@ -4294,15 +4341,20 @@ async function handleResetBranding() {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
-  padding: 1.25rem;
+  padding: 1.15rem 1.2rem;
   display: flex;
   align-items: center;
   gap: 14px;
 }
 
+.stat-card-cancelled {
+  border-color: rgba(220, 38, 38, 0.22);
+}
+
 .stat-icon-wrap {
   width: 44px;
   height: 44px;
+  flex-shrink: 0;
   border-radius: var(--radius-md);
   display: flex;
   align-items: center;
@@ -4312,10 +4364,12 @@ async function handleResetBranding() {
 .bg-sage { background-color: var(--color-primary-soft); color: var(--color-primary); }
 .bg-peach { background-color: var(--color-peach-soft); color: var(--color-peach); }
 .bg-charcoal { background-color: #EAE8E4; color: var(--color-charcoal); }
+.bg-danger-soft { background-color: #FEE2E2; color: #DC2626; }
 
 .stat-info {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .stat-label {
@@ -4324,9 +4378,24 @@ async function handleResetBranding() {
 }
 
 .stat-val {
-  font-size: 1.2rem;
+  font-size: 1.15rem;
   font-weight: 700;
   color: var(--color-charcoal);
+}
+
+.stat-val-danger {
+  color: #B91C1C;
+}
+
+.stat-sub {
+  font-size: 0.74rem;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.stat-sub-danger {
+  color: #DC2626;
+  font-weight: 600;
 }
 
 /* Content Section Card */

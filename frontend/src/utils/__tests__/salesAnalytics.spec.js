@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { topMenus, paymentBreakdown, ordersToCsv, isOrderPaid, paymentLabel } from '@/utils/salesAnalytics'
+import { topMenus, paymentBreakdown, ordersToCsv, isOrderPaid, paymentLabel, isOrderCancelled } from '@/utils/salesAnalytics'
 
 const orders = [
   {
@@ -44,6 +44,26 @@ describe('salesAnalytics', () => {
   it('handles empty orders', () => {
     expect(topMenus([])).toEqual([])
     expect(paymentBreakdown([])).toEqual([])
+  })
+
+  it('excludes cancelled orders from top menus and payment breakdown', () => {
+    const withCancelled = [
+      ...orders,
+      {
+        orderId: 'HYT-3',
+        createdAt: '2026-01-03',
+        orderStatus: 'Batal',
+        payment: { method: 'transfer', label: 'Transfer QRIS + Bukti', status: 'Lunas', paid: true },
+        items: [{ name: 'Kopi', price: 10, quantity: 5, subtotal: 50 }],
+        breakdown: { total: 50 }
+      }
+    ]
+    expect(isOrderCancelled(withCancelled[2])).toBe(true)
+    expect(isOrderCancelled(withCancelled[0])).toBe(false)
+    expect(topMenus(withCancelled)[0]).toMatchObject({ name: 'Kopi', qty: 5, revenue: 5 })
+    const pay = paymentBreakdown(withCancelled)
+    expect(pay).toHaveLength(2)
+    expect(pay.find((p) => p.method === 'transfer')).toBeUndefined()
   })
 
   it('reads paid boolean with legacy string fallback', () => {
