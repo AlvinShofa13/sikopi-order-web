@@ -24,6 +24,8 @@ const isLoggingIn = ref(false)
 
 // Dashboard state
 const searchQuery = ref('')
+const selectedBatchFilter = ref('all')
+const batchList = ref([])
 const selectedOrder = ref(null)
 const isPrinting = ref(false)
 const printMessage = ref('')
@@ -338,16 +340,123 @@ const unpaidActiveOrdersCount = computed(() => {
   return activeOrderHistory.value.filter(o => !o.payment?.paid).length
 })
 
+const ORDERS_PER_PAGE = 10
+const currentOrderPage = ref(1)
+
+const onsiteOrdersCount = computed(() => {
+  return orderHistory.value.filter(ord => !ord.batch?.id).length
+})
+
+const batchFilterOptions = computed(() => {
+  const countsByBatchId = new Map()
+  for (const ord of orderHistory.value) {
+    if (ord.batch?.id != null) {
+      const key = String(ord.batch.id)
+      countsByBatchId.set(key, (countsByBatchId.get(key) || 0) + 1)
+    }
+  }
+
+  const options = []
+  const seen = new Set()
+
+  // Prioritaskan urutan resmi dari daftar batch (terbaru di atas)
+  for (const b of batchList.value || []) {
+    if (b?.id == null) continue
+    const key = String(b.id)
+    if (seen.has(key)) continue
+    seen.add(key)
+    options.push({
+      id: b.id,
+      name: b.name || `Batch #${b.id}`,
+      status: b.status || '',
+      count: countsByBatchId.get(key) || 0
+    })
+  }
+
+  // Sertakan batch yang muncul di riwayat pesanan jika belum ada di batchList
+  for (const ord of orderHistory.value) {
+    if (ord.batch?.id == null) continue
+    const key = String(ord.batch.id)
+    if (seen.has(key)) continue
+    seen.add(key)
+    options.push({
+      id: ord.batch.id,
+      name: ord.batch.name || `Batch #${ord.batch.id}`,
+      status: '',
+      count: countsByBatchId.get(key) || 0
+    })
+  }
+
+  return options
+})
+
 const filteredOrders = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query) return orderHistory.value
+  const batchFilter = selectedBatchFilter.value
+
   return orderHistory.value.filter(ord => {
+    if (batchFilter === 'onsite') {
+      if (ord.batch?.id != null) return false
+    } else if (batchFilter && batchFilter.startsWith('batch:')) {
+      const targetBatchId = batchFilter.slice(6)
+      if (String(ord.batch?.id ?? '') !== targetBatchId) return false
+    }
+
+    if (!query) return true
     return ord.orderId.toLowerCase().includes(query) ||
       (ord.customer?.name || '').toLowerCase().includes(query) ||
       (ord.customer?.phone || '').includes(query) ||
       (ord.batch?.name || '').toLowerCase().includes(query) ||
       (ord.payment?.label || '').toLowerCase().includes(query)
   })
+})
+
+const totalOrderPages = computed(() => {
+  return Math.max(1, Math.ceil(filteredOrders.value.length / ORDERS_PER_PAGE))
+})
+
+const paginatedOrders = computed(() => {
+  const start = (currentOrderPage.value - 1) * ORDERS_PER_PAGE
+  return filteredOrders.value.slice(start, start + ORDERS_PER_PAGE)
+})
+
+const orderPageStart = computed(() => {
+  return filteredOrders.value.length === 0 ? 0 : (currentOrderPage.value - 1) * ORDERS_PER_PAGE + 1
+})
+
+const orderPageEnd = computed(() => {
+  return Math.min(currentOrderPage.value * ORDERS_PER_PAGE, filteredOrders.value.length)
+})
+
+const visibleOrderPages = computed(() => {
+  const total = totalOrderPages.value
+  const current = currentOrderPage.value
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1)
+  }
+  const pages = [1]
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
+  if (start > 2) pages.push('...')
+  for (let p = start; p <= end; p++) pages.push(p)
+  if (end < total - 1) pages.push('...')
+  pages.push(total)
+  return pages
+})
+
+function goToOrderPage(page) {
+  if (typeof page !== 'number') return
+  currentOrderPage.value = Math.min(Math.max(1, page), totalOrderPages.value)
+}
+
+watch([searchQuery, selectedBatchFilter], () => {
+  currentOrderPage.value = 1
+})
+
+watch(totalOrderPages, (maxPage) => {
+  if (currentOrderPage.value > maxPage) {
+    currentOrderPage.value = maxPage
+  }
 })
 
 async function handleLogin() {
@@ -382,7 +491,6 @@ function handleLogout() {
 
 // ---- Mode operasional (saling eksklusif) & batch Open PO ----
 const modeSaving = ref(false)
-const batchList = ref([])
 const batchForm = ref({ name: '', orderDeadline: '', pickupDate: '', notes: '', activateNow: true })
 const editingBatchId = ref(null)
 const isCreatingBatch = ref(false)
@@ -2065,7 +2173,7 @@ async function handleResetBranding() {
               <button 
                 type="button" 
                 class="btn-refresh" 
-                @click="store.refreshOrdersFromDB(); showToast('Data pesanan diperbarui dari database.')"
+                @click="store.refreshOrdersFromDB(); fetchModeSettings(); showToast('Data pesanan & batch diperbarui dari database.')"
                 title="Refresh Data dari Database"
               >
                 <AppIcon name="sparkles" :size="14" />
@@ -2075,42 +2183,83 @@ async function handleResetBranding() {
           </div>
 
           <div class="table-search-row">
-            <div class="search-wrap">
-              <AppIcon name="search" :size="16" class="search-icon" />
-              <input 
-                v-model="searchQuery" 
-                type="text" 
-                placeholder="Cari kode pesanan, nama, nomor WhatsApp, batch..."
-                class="search-input"
-              />
+            <div class="table-filters-group">
+              <div class="search-wrap">
+                <AppIcon name="search" :size="16" class="search-icon" />
+                <input 
+                  v-model="searchQuery" 
+                  type="text" 
+                  placeholder="Cari kode pesanan, nama, nomor WhatsApp, batch..."
+                  class="search-input"
+                />
+              </div>
+
+              <select
+                v-model="selectedBatchFilter"
+                class="batch-filter-select"
+                aria-label="Filter pesanan berdasarkan batch"
+                title="Filter daftar pesanan berdasarkan batch Open PO atau On-site"
+              >
+                <option value="all">Semua Batch &amp; Mode ({{ orderHistory.length }})</option>
+                <option value="onsite">On-site / Tanpa Batch ({{ onsiteOrdersCount }})</option>
+                <option
+                  v-for="b in batchFilterOptions"
+                  :key="b.id"
+                  :value="`batch:${b.id}`"
+                >
+                  {{ b.name }}{{ b.status === 'open' ? ' (Aktif)' : '' }} ({{ b.count }})
+                </option>
+              </select>
+
+              <button
+                v-if="searchQuery.trim() || selectedBatchFilter !== 'all'"
+                type="button"
+                class="btn-reset-filter"
+                @click="searchQuery = ''; selectedBatchFilter = 'all'"
+                title="Reset pencarian & filter batch"
+              >
+                Reset
+              </button>
             </div>
-            <span class="search-meta">Menampilkan {{ filteredOrders.length }} pesanan</span>
+
+            <span class="search-meta">
+              <template v-if="filteredOrders.length > 0">
+                Menampilkan {{ orderPageStart }}–{{ orderPageEnd }} dari {{ filteredOrders.length }} pesanan
+              </template>
+              <template v-else>
+                Menampilkan 0 pesanan
+              </template>
+            </span>
           </div>
 
           <div v-if="filteredOrders.length === 0" class="empty-state text-center">
             <AppIcon name="bag" :size="36" class="empty-icon" />
-            <p>Belum ada data pesanan yang masuk.</p>
+            <p v-if="searchQuery.trim() || selectedBatchFilter !== 'all'">
+              Tidak ada pesanan yang cocok dengan filter yang dipilih.
+            </p>
+            <p v-else>Belum ada data pesanan yang masuk.</p>
           </div>
 
-          <div v-else class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>No. Pesanan</th>
-                  <th>Waktu</th>
-                  <th>Mode / Batch</th>
-                  <th>Pelanggan</th>
-                  <th>WhatsApp</th>
-                  <th>Menu Pesanan</th>
-                  <th>Total Biaya</th>
-                  <th>Metode Bayar</th>
-                  <th>Status Bayar</th>
-                  <th>Penyiapan</th>
-                  <th>Aksi Kasir</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="ord in filteredOrders" :key="ord.orderId">
+          <template v-else>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>No. Pesanan</th>
+                    <th>Waktu</th>
+                    <th>Mode / Batch</th>
+                    <th>Pelanggan</th>
+                    <th>WhatsApp</th>
+                    <th>Menu Pesanan</th>
+                    <th>Total Biaya</th>
+                    <th>Metode Bayar</th>
+                    <th>Status Bayar</th>
+                    <th>Penyiapan</th>
+                    <th>Aksi Kasir</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="ord in paginatedOrders" :key="ord.orderId">
                   <td class="col-id font-mono">
                     <strong>{{ ord.orderId }}</strong>
                   </td>
@@ -2223,7 +2372,47 @@ async function handleResetBranding() {
                 </tr>
               </tbody>
             </table>
-          </div>
+            </div>
+
+            <nav v-if="totalOrderPages > 1" class="orders-pagination" aria-label="Navigasi halaman pesanan">
+              <span class="pagination-info font-mono">
+                Halaman {{ currentOrderPage }} dari {{ totalOrderPages }}
+              </span>
+              <div class="pagination-controls">
+                <button
+                  type="button"
+                  class="btn-page"
+                  :disabled="currentOrderPage <= 1"
+                  @click="goToOrderPage(currentOrderPage - 1)"
+                >
+                  ‹ Sebelumnya
+                </button>
+
+                <template v-for="(page, idx) in visibleOrderPages" :key="`${page}-${idx}`">
+                  <span v-if="page === '...'" class="page-ellipsis" aria-hidden="true">…</span>
+                  <button
+                    v-else
+                    type="button"
+                    class="btn-page btn-page-num font-mono"
+                    :class="{ active: page === currentOrderPage }"
+                    :aria-current="page === currentOrderPage ? 'page' : undefined"
+                    @click="goToOrderPage(page)"
+                  >
+                    {{ page }}
+                  </button>
+                </template>
+
+                <button
+                  type="button"
+                  class="btn-page"
+                  :disabled="currentOrderPage >= totalOrderPages"
+                  @click="goToOrderPage(currentOrderPage + 1)"
+                >
+                  Berikutnya ›
+                </button>
+              </div>
+            </nav>
+          </template>
         </section>
 
         <!-- ================= TAB: POS KASIR (pesan langsung, lunas tunai) ================= -->
@@ -4606,14 +4795,61 @@ async function handleResetBranding() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   margin-bottom: 1.25rem;
-  gap: 1rem;
+  gap: 0.75rem 1rem;
+}
+
+.table-filters-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  flex: 1;
+  min-width: 240px;
 }
 
 .search-wrap {
   position: relative;
   flex: 1;
-  max-width: 400px;
+  min-width: 220px;
+  max-width: 380px;
+}
+
+.batch-filter-select {
+  padding: 8px 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface);
+  color: var(--color-charcoal);
+  font-size: 0.85rem;
+  font-weight: 500;
+  min-width: 210px;
+  max-width: 280px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.batch-filter-select:focus {
+  border-color: var(--color-primary);
+}
+
+.btn-reset-filter {
+  padding: 7px 12px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-reset-filter:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .search-wrap .search-icon {
@@ -4641,6 +4877,70 @@ async function handleResetBranding() {
 /* Data Table */
 .table-responsive {
   overflow-x: auto;
+}
+
+.orders-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-light);
+}
+
+.pagination-info {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.btn-page {
+  padding: 0.42rem 0.78rem;
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  background-color: var(--bg-surface);
+  color: var(--color-charcoal);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-page:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.btn-page:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-page-num {
+  min-width: 34px;
+  text-align: center;
+  padding: 0.42rem 0.55rem;
+}
+
+.btn-page.active {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #FFFFFF;
+}
+
+.page-ellipsis {
+  padding: 0 0.3rem;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  user-select: none;
 }
 
 .data-table {
